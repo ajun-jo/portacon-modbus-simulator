@@ -1,0 +1,330 @@
+﻿machine,name,sim_port,unit_id,group,tag,plc_addr,table,modbus_addr (0-based),"modbus_ref (1-based, 6-digit)",bit,type,words,word_order,byte_order,status
+wind1,권선기 1호기,5022,1,data,가동중,MB4400,coil,7040,7041,,BOOL,,,,ok
+wind1,권선기 1호기,5022,1,data,투입수,MW8202,hr,8202,408203,,INT32,2,little,,ok
+wind1,권선기 1호기,5022,1,data,생산수1,MW8212,hr,8212,408213,,INT32,2,little,,ok
+wind1,권선기 1호기,5022,1,data,생산수2,MW8222,hr,8222,408223,,INT32,2,little,,ok
+wind1,권선기 1호기,5022,1,data,현재 LOT No.,MW520070,hr,,,,STRING,5,,little,"pending: MW520070 is past Modbus's 65535 limit; waiting on the equipment vendor. Set ""addr"" to serve this tag (regenerating keeps it)."
+wind1,권선기 1호기,5022,1,data,품명,MW9420,hr,9420,409421,,UINT16,1,,,ok
+wind1,권선기 1호기,5022,1,data,택타임,MW1202,hr,1202,401203,,INT16,1,,,ok
+wind1,권선기 1호기,5022,1,data,히터팁 사용수,MW8242,hr,8242,408243,,INT32,2,little,,ok
+wind1,권선기 1호기,5022,1,data,히터팁 설정수,MW8246,hr,8246,408247,,INT32,2,little,,ok
+wind1,권선기 1호기,5022,1,data,숫돌 연마수,MW8252,hr,8252,408253,,INT32,2,little,,ok
+wind1,권선기 1호기,5022,1,data,숫돌 연마설정수,MW8256,hr,8256,408257,,INT32,2,little,,ok
+wind1,권선기 1호기,5022,1,data,브러쉬 사용수,MW8262,hr,8262,408263,,INT32,2,little,,ok
+wind1,권선기 1호기,5022,1,data,브러쉬 설정수,MW8266,hr,8266,408267,,INT32,2,little,,ok
+wind1,권선기 1호기,5022,1,data,히터칩1 START 온도,MW32000,hr,32000,432001,,INT16,1,,,ok
+wind1,권선기 1호기,5022,1,data,히터칩1 FINISH 온도,MW32010,hr,32010,432011,,INT16,1,,,ok
+wind1,권선기 1호기,5022,1,data,히터칩2 START 온도,MW32020,hr,32020,432021,,INT16,1,,,ok
+wind1,권선기 1호기,5022,1,data,히터칩2 FINISH 온도,MW32030,hr,32030,432031,,INT16,1,,,ok
+wind1,권선기 1호기,5022,1,data,히터칩3 START 온도,MW32040,hr,32040,432041,,INT16,1,,,ok
+wind1,권선기 1호기,5022,1,data,히터칩3 FINISH 온도,MW32050,hr,32050,432051,,INT16,1,,,ok
+wind1,권선기 1호기,5022,1,data,히터칩4 START 온도,MW32060,hr,32060,432061,,INT16,1,,,ok
+wind1,권선기 1호기,5022,1,data,히터칩4 FINISH 온도,MW32070,hr,32070,432071,,INT16,1,,,ok
+wind1,권선기 1호기,5022,1,data,히터칩1 START 하중,MW32530,hr,32530,432531,,INT16,1,,,ok
+wind1,권선기 1호기,5022,1,data,히터칩1 FINISH 하중,MW32540,hr,32540,432541,,INT16,1,,,ok
+wind1,권선기 1호기,5022,1,data,히터칩2 START 하중,MW32531,hr,32531,432532,,INT16,1,,,ok
+wind1,권선기 1호기,5022,1,data,히터칩2 FINISH 하중,MW32541,hr,32541,432542,,INT16,1,,,ok
+wind1,권선기 1호기,5022,1,data,히터칩3 START 하중,MW32532,hr,32532,432533,,INT16,1,,,ok
+wind1,권선기 1호기,5022,1,data,히터칩3 FINISH 하중,MW32542,hr,32542,432543,,INT16,1,,,ok
+wind1,권선기 1호기,5022,1,data,히터칩4 START 하중,MW32533,hr,32533,432534,,INT16,1,,,ok
+wind1,권선기 1호기,5022,1,data,히터칩4 FINISH 하중,MW32543,hr,32543,432544,,INT16,1,,,ok
+wind1,권선기 1호기,5022,1,data,히터칩1 소모량,MW35320,hr,35320,435321,,INT32,2,little,,ok
+wind1,권선기 1호기,5022,1,data,히터칩2 소모량,MW35322,hr,35322,435323,,INT32,2,little,,ok
+wind1,권선기 1호기,5022,1,data,히터칩3 소모량,MW35324,hr,35324,435325,,INT32,2,little,,ok
+wind1,권선기 1호기,5022,1,data,히터칩4 소모량,MW35326,hr,35326,435327,,INT32,2,little,,ok
+wind1,권선기 1호기,5022,1,alarm,비상정지,MB00019220,coil,30752,30753,,BOOL,,,,ok
+wind1,권선기 1호기,5022,1,alarm,프로그램 알람,MB00019224,coil,30756,30757,,BOOL,,,,ok
+wind1,권선기 1호기,5022,1,alarm,프로그램 번호 알람,MB00019225,coil,30757,30758,,BOOL,,,,ok
+wind1,권선기 1호기,5022,1,alarm,사이클타임 오버,MB00019227,coil,30759,30760,,BOOL,,,,ok
+wind1,권선기 1호기,5022,1,alarm,삽입코어 뜸,MB00055336,hr,5533,405534,6,BIT,,,,ok
+wind1,권선기 1호기,5022,1,alarm,삽입코어 없음,MB00055337,hr,5533,405534,7,BIT,,,,ok
+wind1,권선기 1호기,5022,1,alarm,계선 히트 상하한 에러,MB00055537,hr,5553,405554,7,BIT,,,,ok
+wind1,권선기 1호기,5022,1,alarm,계선 하중 체크 에러,MB0005553D,hr,5553,405554,13,BIT,,,,ok
+wind1,권선기 1호기,5022,1,alarm,배출코어 잔여,MB00055636,hr,5563,405564,6,BIT,,,,ok
+wind1,권선기 1호기,5022,1,alarm,배출 푸셔 사이클 타임아웃,MB0005563A,hr,5563,405564,10,BIT,,,,ok
+wind1,권선기 1호기,5022,1,alarm,투입선단코어도착시간 오버,MB00056136,hr,5613,405614,6,BIT,,,,ok
+wind1,권선기 1호기,5022,1,alarm,단선 1-1,MB000224000,hr,22400,422401,0,BIT,,,,ok
+wind1,권선기 1호기,5022,1,alarm,단선 1-2,MB000224001,hr,22400,422401,1,BIT,,,,ok
+wind1,권선기 1호기,5022,1,alarm,단선 1-3,MB000224002,hr,22400,422401,2,BIT,,,,ok
+wind1,권선기 1호기,5022,1,alarm,단선 1-4,MB000224003,hr,22400,422401,3,BIT,,,,ok
+wind1,권선기 1호기,5022,1,alarm,단선 1-5,MB000224004,hr,22400,422401,4,BIT,,,,ok
+wind1,권선기 1호기,5022,1,alarm,단선 1-6,MB000224005,hr,22400,422401,5,BIT,,,,ok
+wind1,권선기 1호기,5022,1,alarm,단선 1-7,MB000224006,hr,22400,422401,6,BIT,,,,ok
+wind1,권선기 1호기,5022,1,alarm,단선 1-8,MB000224007,hr,22400,422401,7,BIT,,,,ok
+wind2,권선기 2호기,5023,2,data,가동중,MB4400,coil,7040,7041,,BOOL,,,,ok
+wind2,권선기 2호기,5023,2,data,투입수,MW8202,hr,8202,408203,,INT32,2,little,,ok
+wind2,권선기 2호기,5023,2,data,생산수1,MW8212,hr,8212,408213,,INT32,2,little,,ok
+wind2,권선기 2호기,5023,2,data,생산수2,MW8222,hr,8222,408223,,INT32,2,little,,ok
+wind2,권선기 2호기,5023,2,data,현재 LOT No.,MW520070,hr,,,,STRING,5,,little,"pending: MW520070 is past Modbus's 65535 limit; waiting on the equipment vendor. Set ""addr"" to serve this tag (regenerating keeps it)."
+wind2,권선기 2호기,5023,2,data,품명,MW9420,hr,9420,409421,,UINT16,1,,,ok
+wind2,권선기 2호기,5023,2,data,택타임,MW1202,hr,1202,401203,,INT16,1,,,ok
+wind2,권선기 2호기,5023,2,data,히터팁 사용수,MW8242,hr,8242,408243,,INT32,2,little,,ok
+wind2,권선기 2호기,5023,2,data,히터팁 설정수,MW8246,hr,8246,408247,,INT32,2,little,,ok
+wind2,권선기 2호기,5023,2,data,숫돌 연마수,MW8252,hr,8252,408253,,INT32,2,little,,ok
+wind2,권선기 2호기,5023,2,data,숫돌 연마설정수,MW8256,hr,8256,408257,,INT32,2,little,,ok
+wind2,권선기 2호기,5023,2,data,브러쉬 사용수,MW8262,hr,8262,408263,,INT32,2,little,,ok
+wind2,권선기 2호기,5023,2,data,브러쉬 설정수,MW8266,hr,8266,408267,,INT32,2,little,,ok
+wind2,권선기 2호기,5023,2,data,히터칩1 START 온도,MW32000,hr,32000,432001,,INT16,1,,,ok
+wind2,권선기 2호기,5023,2,data,히터칩1 FINISH 온도,MW32010,hr,32010,432011,,INT16,1,,,ok
+wind2,권선기 2호기,5023,2,data,히터칩2 START 온도,MW32020,hr,32020,432021,,INT16,1,,,ok
+wind2,권선기 2호기,5023,2,data,히터칩2 FINISH 온도,MW32030,hr,32030,432031,,INT16,1,,,ok
+wind2,권선기 2호기,5023,2,data,히터칩3 START 온도,MW32040,hr,32040,432041,,INT16,1,,,ok
+wind2,권선기 2호기,5023,2,data,히터칩3 FINISH 온도,MW32050,hr,32050,432051,,INT16,1,,,ok
+wind2,권선기 2호기,5023,2,data,히터칩4 START 온도,MW32060,hr,32060,432061,,INT16,1,,,ok
+wind2,권선기 2호기,5023,2,data,히터칩4 FINISH 온도,MW32070,hr,32070,432071,,INT16,1,,,ok
+wind2,권선기 2호기,5023,2,data,히터칩1 START 하중,MW32530,hr,32530,432531,,INT16,1,,,ok
+wind2,권선기 2호기,5023,2,data,히터칩1 FINISH 하중,MW32540,hr,32540,432541,,INT16,1,,,ok
+wind2,권선기 2호기,5023,2,data,히터칩2 START 하중,MW32531,hr,32531,432532,,INT16,1,,,ok
+wind2,권선기 2호기,5023,2,data,히터칩2 FINISH 하중,MW32541,hr,32541,432542,,INT16,1,,,ok
+wind2,권선기 2호기,5023,2,data,히터칩3 START 하중,MW32532,hr,32532,432533,,INT16,1,,,ok
+wind2,권선기 2호기,5023,2,data,히터칩3 FINISH 하중,MW32542,hr,32542,432543,,INT16,1,,,ok
+wind2,권선기 2호기,5023,2,data,히터칩4 START 하중,MW32533,hr,32533,432534,,INT16,1,,,ok
+wind2,권선기 2호기,5023,2,data,히터칩4 FINISH 하중,MW32543,hr,32543,432544,,INT16,1,,,ok
+wind2,권선기 2호기,5023,2,data,히터칩1 소모량,MW35320,hr,35320,435321,,INT32,2,little,,ok
+wind2,권선기 2호기,5023,2,data,히터칩2 소모량,MW35322,hr,35322,435323,,INT32,2,little,,ok
+wind2,권선기 2호기,5023,2,data,히터칩3 소모량,MW35324,hr,35324,435325,,INT32,2,little,,ok
+wind2,권선기 2호기,5023,2,data,히터칩4 소모량,MW35326,hr,35326,435327,,INT32,2,little,,ok
+wind2,권선기 2호기,5023,2,alarm,비상정지,MB00019220,coil,30752,30753,,BOOL,,,,ok
+wind2,권선기 2호기,5023,2,alarm,프로그램 알람,MB00019224,coil,30756,30757,,BOOL,,,,ok
+wind2,권선기 2호기,5023,2,alarm,프로그램 번호 알람,MB00019225,coil,30757,30758,,BOOL,,,,ok
+wind2,권선기 2호기,5023,2,alarm,사이클타임 오버,MB00019227,coil,30759,30760,,BOOL,,,,ok
+wind2,권선기 2호기,5023,2,alarm,삽입코어 뜸,MB00055336,hr,5533,405534,6,BIT,,,,ok
+wind2,권선기 2호기,5023,2,alarm,삽입코어 없음,MB00055337,hr,5533,405534,7,BIT,,,,ok
+wind2,권선기 2호기,5023,2,alarm,계선 히트 상하한 에러,MB00055537,hr,5553,405554,7,BIT,,,,ok
+wind2,권선기 2호기,5023,2,alarm,계선 하중 체크 에러,MB0005553D,hr,5553,405554,13,BIT,,,,ok
+wind2,권선기 2호기,5023,2,alarm,배출코어 잔여,MB00055636,hr,5563,405564,6,BIT,,,,ok
+wind2,권선기 2호기,5023,2,alarm,배출 푸셔 사이클 타임아웃,MB0005563A,hr,5563,405564,10,BIT,,,,ok
+wind2,권선기 2호기,5023,2,alarm,투입선단코어도착시간 오버,MB00056136,hr,5613,405614,6,BIT,,,,ok
+wind2,권선기 2호기,5023,2,alarm,단선 1-1,MB000224000,hr,22400,422401,0,BIT,,,,ok
+wind2,권선기 2호기,5023,2,alarm,단선 1-2,MB000224001,hr,22400,422401,1,BIT,,,,ok
+wind2,권선기 2호기,5023,2,alarm,단선 1-3,MB000224002,hr,22400,422401,2,BIT,,,,ok
+wind2,권선기 2호기,5023,2,alarm,단선 1-4,MB000224003,hr,22400,422401,3,BIT,,,,ok
+wind2,권선기 2호기,5023,2,alarm,단선 1-5,MB000224004,hr,22400,422401,4,BIT,,,,ok
+wind2,권선기 2호기,5023,2,alarm,단선 1-6,MB000224005,hr,22400,422401,5,BIT,,,,ok
+wind2,권선기 2호기,5023,2,alarm,단선 1-7,MB000224006,hr,22400,422401,6,BIT,,,,ok
+wind2,권선기 2호기,5023,2,alarm,단선 1-8,MB000224007,hr,22400,422401,7,BIT,,,,ok
+wind3,권선기 3호기,5024,3,data,가동중,MB4400,coil,7040,7041,,BOOL,,,,ok
+wind3,권선기 3호기,5024,3,data,투입수,MW8202,hr,8202,408203,,INT32,2,little,,ok
+wind3,권선기 3호기,5024,3,data,생산수1,MW8212,hr,8212,408213,,INT32,2,little,,ok
+wind3,권선기 3호기,5024,3,data,생산수2,MW8222,hr,8222,408223,,INT32,2,little,,ok
+wind3,권선기 3호기,5024,3,data,현재 LOT No.,MW520070,hr,,,,STRING,5,,little,"pending: MW520070 is past Modbus's 65535 limit; waiting on the equipment vendor. Set ""addr"" to serve this tag (regenerating keeps it)."
+wind3,권선기 3호기,5024,3,data,품명,MW9420,hr,9420,409421,,UINT16,1,,,ok
+wind3,권선기 3호기,5024,3,data,택타임,MW1202,hr,1202,401203,,INT16,1,,,ok
+wind3,권선기 3호기,5024,3,data,히터팁 사용수,MW8242,hr,8242,408243,,INT32,2,little,,ok
+wind3,권선기 3호기,5024,3,data,히터팁 설정수,MW8246,hr,8246,408247,,INT32,2,little,,ok
+wind3,권선기 3호기,5024,3,data,숫돌 연마수,MW8252,hr,8252,408253,,INT32,2,little,,ok
+wind3,권선기 3호기,5024,3,data,숫돌 연마설정수,MW8256,hr,8256,408257,,INT32,2,little,,ok
+wind3,권선기 3호기,5024,3,data,브러쉬 사용수,MW8262,hr,8262,408263,,INT32,2,little,,ok
+wind3,권선기 3호기,5024,3,data,브러쉬 설정수,MW8266,hr,8266,408267,,INT32,2,little,,ok
+wind3,권선기 3호기,5024,3,data,히터칩1 START 온도,MW32000,hr,32000,432001,,INT16,1,,,ok
+wind3,권선기 3호기,5024,3,data,히터칩1 FINISH 온도,MW32010,hr,32010,432011,,INT16,1,,,ok
+wind3,권선기 3호기,5024,3,data,히터칩2 START 온도,MW32020,hr,32020,432021,,INT16,1,,,ok
+wind3,권선기 3호기,5024,3,data,히터칩2 FINISH 온도,MW32030,hr,32030,432031,,INT16,1,,,ok
+wind3,권선기 3호기,5024,3,data,히터칩3 START 온도,MW32040,hr,32040,432041,,INT16,1,,,ok
+wind3,권선기 3호기,5024,3,data,히터칩3 FINISH 온도,MW32050,hr,32050,432051,,INT16,1,,,ok
+wind3,권선기 3호기,5024,3,data,히터칩4 START 온도,MW32060,hr,32060,432061,,INT16,1,,,ok
+wind3,권선기 3호기,5024,3,data,히터칩4 FINISH 온도,MW32070,hr,32070,432071,,INT16,1,,,ok
+wind3,권선기 3호기,5024,3,data,히터칩1 START 하중,MW32530,hr,32530,432531,,INT16,1,,,ok
+wind3,권선기 3호기,5024,3,data,히터칩1 FINISH 하중,MW32540,hr,32540,432541,,INT16,1,,,ok
+wind3,권선기 3호기,5024,3,data,히터칩2 START 하중,MW32531,hr,32531,432532,,INT16,1,,,ok
+wind3,권선기 3호기,5024,3,data,히터칩2 FINISH 하중,MW32541,hr,32541,432542,,INT16,1,,,ok
+wind3,권선기 3호기,5024,3,data,히터칩3 START 하중,MW32532,hr,32532,432533,,INT16,1,,,ok
+wind3,권선기 3호기,5024,3,data,히터칩3 FINISH 하중,MW32542,hr,32542,432543,,INT16,1,,,ok
+wind3,권선기 3호기,5024,3,data,히터칩4 START 하중,MW32533,hr,32533,432534,,INT16,1,,,ok
+wind3,권선기 3호기,5024,3,data,히터칩4 FINISH 하중,MW32543,hr,32543,432544,,INT16,1,,,ok
+wind3,권선기 3호기,5024,3,data,히터칩1 소모량,MW35320,hr,35320,435321,,INT32,2,little,,ok
+wind3,권선기 3호기,5024,3,data,히터칩2 소모량,MW35322,hr,35322,435323,,INT32,2,little,,ok
+wind3,권선기 3호기,5024,3,data,히터칩3 소모량,MW35324,hr,35324,435325,,INT32,2,little,,ok
+wind3,권선기 3호기,5024,3,data,히터칩4 소모량,MW35326,hr,35326,435327,,INT32,2,little,,ok
+wind3,권선기 3호기,5024,3,alarm,비상정지,MB00019220,coil,30752,30753,,BOOL,,,,ok
+wind3,권선기 3호기,5024,3,alarm,프로그램 알람,MB00019224,coil,30756,30757,,BOOL,,,,ok
+wind3,권선기 3호기,5024,3,alarm,프로그램 번호 알람,MB00019225,coil,30757,30758,,BOOL,,,,ok
+wind3,권선기 3호기,5024,3,alarm,사이클타임 오버,MB00019227,coil,30759,30760,,BOOL,,,,ok
+wind3,권선기 3호기,5024,3,alarm,삽입코어 뜸,MB00055336,hr,5533,405534,6,BIT,,,,ok
+wind3,권선기 3호기,5024,3,alarm,삽입코어 없음,MB00055337,hr,5533,405534,7,BIT,,,,ok
+wind3,권선기 3호기,5024,3,alarm,계선 히트 상하한 에러,MB00055537,hr,5553,405554,7,BIT,,,,ok
+wind3,권선기 3호기,5024,3,alarm,계선 하중 체크 에러,MB0005553D,hr,5553,405554,13,BIT,,,,ok
+wind3,권선기 3호기,5024,3,alarm,배출코어 잔여,MB00055636,hr,5563,405564,6,BIT,,,,ok
+wind3,권선기 3호기,5024,3,alarm,배출 푸셔 사이클 타임아웃,MB0005563A,hr,5563,405564,10,BIT,,,,ok
+wind3,권선기 3호기,5024,3,alarm,투입선단코어도착시간 오버,MB00056136,hr,5613,405614,6,BIT,,,,ok
+wind3,권선기 3호기,5024,3,alarm,단선 1-1,MB000224000,hr,22400,422401,0,BIT,,,,ok
+wind3,권선기 3호기,5024,3,alarm,단선 1-2,MB000224001,hr,22400,422401,1,BIT,,,,ok
+wind3,권선기 3호기,5024,3,alarm,단선 1-3,MB000224002,hr,22400,422401,2,BIT,,,,ok
+wind3,권선기 3호기,5024,3,alarm,단선 1-4,MB000224003,hr,22400,422401,3,BIT,,,,ok
+wind3,권선기 3호기,5024,3,alarm,단선 1-5,MB000224004,hr,22400,422401,4,BIT,,,,ok
+wind3,권선기 3호기,5024,3,alarm,단선 1-6,MB000224005,hr,22400,422401,5,BIT,,,,ok
+wind3,권선기 3호기,5024,3,alarm,단선 1-7,MB000224006,hr,22400,422401,6,BIT,,,,ok
+wind3,권선기 3호기,5024,3,alarm,단선 1-8,MB000224007,hr,22400,422401,7,BIT,,,,ok
+wind4,권선기 4호기,5025,4,data,가동중,MB4400,coil,7040,7041,,BOOL,,,,ok
+wind4,권선기 4호기,5025,4,data,투입수,MW8202,hr,8202,408203,,INT32,2,little,,ok
+wind4,권선기 4호기,5025,4,data,생산수1,MW8212,hr,8212,408213,,INT32,2,little,,ok
+wind4,권선기 4호기,5025,4,data,생산수2,MW8222,hr,8222,408223,,INT32,2,little,,ok
+wind4,권선기 4호기,5025,4,data,현재 LOT No.,MW520070,hr,,,,STRING,5,,little,"pending: MW520070 is past Modbus's 65535 limit; waiting on the equipment vendor. Set ""addr"" to serve this tag (regenerating keeps it)."
+wind4,권선기 4호기,5025,4,data,품명,MW9420,hr,9420,409421,,UINT16,1,,,ok
+wind4,권선기 4호기,5025,4,data,택타임,MW1202,hr,1202,401203,,INT16,1,,,ok
+wind4,권선기 4호기,5025,4,data,히터팁 사용수,MW8242,hr,8242,408243,,INT32,2,little,,ok
+wind4,권선기 4호기,5025,4,data,히터팁 설정수,MW8246,hr,8246,408247,,INT32,2,little,,ok
+wind4,권선기 4호기,5025,4,data,숫돌 연마수,MW8252,hr,8252,408253,,INT32,2,little,,ok
+wind4,권선기 4호기,5025,4,data,숫돌 연마설정수,MW8256,hr,8256,408257,,INT32,2,little,,ok
+wind4,권선기 4호기,5025,4,data,브러쉬 사용수,MW8262,hr,8262,408263,,INT32,2,little,,ok
+wind4,권선기 4호기,5025,4,data,브러쉬 설정수,MW8266,hr,8266,408267,,INT32,2,little,,ok
+wind4,권선기 4호기,5025,4,data,히터칩1 START 온도,MW32000,hr,32000,432001,,INT16,1,,,ok
+wind4,권선기 4호기,5025,4,data,히터칩1 FINISH 온도,MW32010,hr,32010,432011,,INT16,1,,,ok
+wind4,권선기 4호기,5025,4,data,히터칩2 START 온도,MW32020,hr,32020,432021,,INT16,1,,,ok
+wind4,권선기 4호기,5025,4,data,히터칩2 FINISH 온도,MW32030,hr,32030,432031,,INT16,1,,,ok
+wind4,권선기 4호기,5025,4,data,히터칩3 START 온도,MW32040,hr,32040,432041,,INT16,1,,,ok
+wind4,권선기 4호기,5025,4,data,히터칩3 FINISH 온도,MW32050,hr,32050,432051,,INT16,1,,,ok
+wind4,권선기 4호기,5025,4,data,히터칩4 START 온도,MW32060,hr,32060,432061,,INT16,1,,,ok
+wind4,권선기 4호기,5025,4,data,히터칩4 FINISH 온도,MW32070,hr,32070,432071,,INT16,1,,,ok
+wind4,권선기 4호기,5025,4,data,히터칩1 START 하중,MW32530,hr,32530,432531,,INT16,1,,,ok
+wind4,권선기 4호기,5025,4,data,히터칩1 FINISH 하중,MW32540,hr,32540,432541,,INT16,1,,,ok
+wind4,권선기 4호기,5025,4,data,히터칩2 START 하중,MW32531,hr,32531,432532,,INT16,1,,,ok
+wind4,권선기 4호기,5025,4,data,히터칩2 FINISH 하중,MW32541,hr,32541,432542,,INT16,1,,,ok
+wind4,권선기 4호기,5025,4,data,히터칩3 START 하중,MW32532,hr,32532,432533,,INT16,1,,,ok
+wind4,권선기 4호기,5025,4,data,히터칩3 FINISH 하중,MW32542,hr,32542,432543,,INT16,1,,,ok
+wind4,권선기 4호기,5025,4,data,히터칩4 START 하중,MW32533,hr,32533,432534,,INT16,1,,,ok
+wind4,권선기 4호기,5025,4,data,히터칩4 FINISH 하중,MW32543,hr,32543,432544,,INT16,1,,,ok
+wind4,권선기 4호기,5025,4,data,히터칩1 소모량,MW35320,hr,35320,435321,,INT32,2,little,,ok
+wind4,권선기 4호기,5025,4,data,히터칩2 소모량,MW35322,hr,35322,435323,,INT32,2,little,,ok
+wind4,권선기 4호기,5025,4,data,히터칩3 소모량,MW35324,hr,35324,435325,,INT32,2,little,,ok
+wind4,권선기 4호기,5025,4,data,히터칩4 소모량,MW35326,hr,35326,435327,,INT32,2,little,,ok
+wind4,권선기 4호기,5025,4,alarm,비상정지,MB00019220,coil,30752,30753,,BOOL,,,,ok
+wind4,권선기 4호기,5025,4,alarm,프로그램 알람,MB00019224,coil,30756,30757,,BOOL,,,,ok
+wind4,권선기 4호기,5025,4,alarm,프로그램 번호 알람,MB00019225,coil,30757,30758,,BOOL,,,,ok
+wind4,권선기 4호기,5025,4,alarm,사이클타임 오버,MB00019227,coil,30759,30760,,BOOL,,,,ok
+wind4,권선기 4호기,5025,4,alarm,삽입코어 뜸,MB00055336,hr,5533,405534,6,BIT,,,,ok
+wind4,권선기 4호기,5025,4,alarm,삽입코어 없음,MB00055337,hr,5533,405534,7,BIT,,,,ok
+wind4,권선기 4호기,5025,4,alarm,계선 히트 상하한 에러,MB00055537,hr,5553,405554,7,BIT,,,,ok
+wind4,권선기 4호기,5025,4,alarm,계선 하중 체크 에러,MB0005553D,hr,5553,405554,13,BIT,,,,ok
+wind4,권선기 4호기,5025,4,alarm,배출코어 잔여,MB00055636,hr,5563,405564,6,BIT,,,,ok
+wind4,권선기 4호기,5025,4,alarm,배출 푸셔 사이클 타임아웃,MB0005563A,hr,5563,405564,10,BIT,,,,ok
+wind4,권선기 4호기,5025,4,alarm,투입선단코어도착시간 오버,MB00056136,hr,5613,405614,6,BIT,,,,ok
+wind4,권선기 4호기,5025,4,alarm,단선 1-1,MB000224000,hr,22400,422401,0,BIT,,,,ok
+wind4,권선기 4호기,5025,4,alarm,단선 1-2,MB000224001,hr,22400,422401,1,BIT,,,,ok
+wind4,권선기 4호기,5025,4,alarm,단선 1-3,MB000224002,hr,22400,422401,2,BIT,,,,ok
+wind4,권선기 4호기,5025,4,alarm,단선 1-4,MB000224003,hr,22400,422401,3,BIT,,,,ok
+wind4,권선기 4호기,5025,4,alarm,단선 1-5,MB000224004,hr,22400,422401,4,BIT,,,,ok
+wind4,권선기 4호기,5025,4,alarm,단선 1-6,MB000224005,hr,22400,422401,5,BIT,,,,ok
+wind4,권선기 4호기,5025,4,alarm,단선 1-7,MB000224006,hr,22400,422401,6,BIT,,,,ok
+wind4,권선기 4호기,5025,4,alarm,단선 1-8,MB000224007,hr,22400,422401,7,BIT,,,,ok
+sp1,SP접착기 1호기,5020,5,data,가동중,M5,coil,5,6,,BOOL,,,,ok
+sp1,SP접착기 1호기,5020,5,data,투입수,D1104,hr,1104,401105,,INT32,2,little,,ok
+sp1,SP접착기 1호기,5020,5,data,양품수,D1106,hr,1106,401107,,INT32,2,little,,ok
+sp1,SP접착기 1호기,5020,5,data,전체 불량수,D1108,hr,1108,401109,,INT32,2,little,,ok
+sp1,SP접착기 1호기,5020,5,data,도포형상 불량수,D1110,hr,1110,401111,,INT32,2,little,,ok
+sp1,SP접착기 1호기,5020,5,data,도포타임아웃 SP수,D1114,hr,1114,401115,,INT32,2,little,,ok
+sp1,SP접착기 1호기,5020,5,data,DR탑재 불량수,D1116,hr,1116,401117,,INT32,2,little,,ok
+sp1,SP접착기 1호기,5020,5,data,히터테이블 인덱스 타임아웃수,D1158,hr,1158,401159,,INT32,2,little,,ok
+sp1,SP접착기 1호기,5020,5,data,히터 이재 취출미스수,D1172,hr,1172,401173,,INT32,2,little,,ok
+sp1,SP접착기 1호기,5020,5,data,수납 이재 취출미스수,D1168,hr,1168,401169,,INT32,2,little,,ok
+sp1,SP접착기 1호기,5020,5,data,LOT No.,R771,hr,771,400772,,STRING,5,,little,ok
+sp1,SP접착기 1호기,5020,5,data,품명,D8960,hr,8960,408961,,STRING,8,,little,ok
+sp1,SP접착기 1호기,5020,5,data,택타임,D1000,hr,1000,401001,,UINT16,1,,,ok
+sp1,SP접착기 1호기,5020,5,alarm,비상정지알람,M400,coil,400,401,,BOOL,,,,ok
+sp1,SP접착기 1호기,5020,5,alarm,에어압력 저하,M401,coil,401,402,,BOOL,,,,ok
+sp1,SP접착기 1호기,5020,5,alarm,흡인압력 저하,M402,coil,402,403,,BOOL,,,,ok
+sp1,SP접착기 1호기,5020,5,alarm,제어 BOX1 내부 온도 이상,M412,coil,412,413,,BOOL,,,,ok
+sp1,SP접착기 1호기,5020,5,alarm,수납부 이재 취출 미스,M612,coil,612,613,,BOOL,,,,ok
+sp1,SP접착기 1호기,5020,5,alarm,제어 BOX2 내부 온도 이상,M413,coil,413,414,,BOOL,,,,ok
+sp1,SP접착기 1호기,5020,5,alarm,PK 히터팩 이상,M415,coil,415,416,,BOOL,,,,ok
+sp1,SP접착기 1호기,5020,5,alarm,서보앰프 전원(U101),M436,coil,436,437,,BOOL,,,,ok
+sp1,SP접착기 1호기,5020,5,alarm,메인모터 전원,M437,coil,437,438,,BOOL,,,,ok
+sp1,SP접착기 1호기,5020,5,alarm,서보앰프 전원(U102),M451,coil,451,452,,BOOL,,,,ok
+sp1,SP접착기 1호기,5020,5,alarm,서보앰프 전원(U103),M452,coil,452,453,,BOOL,,,,ok
+sp1,SP접착기 1호기,5020,5,alarm,AC100V 전원,M453,coil,453,454,,BOOL,,,,ok
+sp1,SP접착기 1호기,5020,5,alarm,도포 XG-X사이클타임 아웃,M518,coil,518,519,,BOOL,,,,ok
+sp1,SP접착기 1호기,5020,5,alarm,도포 XG-X 장치 이상 (전원 투입시),M519,coil,519,520,,BOOL,,,,ok
+sp1,SP접착기 1호기,5020,5,alarm,수납 푸셔 제품 복귀,M571,coil,571,572,,BOOL,,,,ok
+sp1,SP접착기 1호기,5020,5,alarm,SP 연속 선단 워크 없음,M600,coil,600,601,,BOOL,,,,ok
+sp1,SP접착기 1호기,5020,5,alarm,SP 연속 탑재미스,M601,coil,601,602,,BOOL,,,,ok
+sp1,SP접착기 1호기,5020,5,alarm,DR 연속 선단 워크 없음,M602,coil,602,603,,BOOL,,,,ok
+sp1,SP접착기 1호기,5020,5,alarm,DR 연속 탑재미스,M603,coil,603,604,,BOOL,,,,ok
+sp1,SP접착기 1호기,5020,5,alarm,CAM1 도포 형상.연속 NG,M604,coil,604,605,,BOOL,,,,ok
+sp1,SP접착기 1호기,5020,5,alarm,CAM2 도포 형상.연속 NG,M605,coil,605,606,,BOOL,,,,ok
+sp1,SP접착기 1호기,5020,5,alarm,히터부 이재취출 미스,M614,coil,614,615,,BOOL,,,,ok
+sp2,SP접착기 2호기,5021,6,data,가동중,M5,coil,5,6,,BOOL,,,,ok
+sp2,SP접착기 2호기,5021,6,data,투입수,D1104,hr,1104,401105,,INT32,2,little,,ok
+sp2,SP접착기 2호기,5021,6,data,양품수,D1106,hr,1106,401107,,INT32,2,little,,ok
+sp2,SP접착기 2호기,5021,6,data,전체 불량수,D1108,hr,1108,401109,,INT32,2,little,,ok
+sp2,SP접착기 2호기,5021,6,data,도포형상 불량수,D1110,hr,1110,401111,,INT32,2,little,,ok
+sp2,SP접착기 2호기,5021,6,data,도포타임아웃 SP수,D1114,hr,1114,401115,,INT32,2,little,,ok
+sp2,SP접착기 2호기,5021,6,data,DR탑재 불량수,D1116,hr,1116,401117,,INT32,2,little,,ok
+sp2,SP접착기 2호기,5021,6,data,히터테이블 인덱스 타임아웃수,D1158,hr,1158,401159,,INT32,2,little,,ok
+sp2,SP접착기 2호기,5021,6,data,히터 이재 취출미스수,D1172,hr,1172,401173,,INT32,2,little,,ok
+sp2,SP접착기 2호기,5021,6,data,수납 이재 취출미스수,D1168,hr,1168,401169,,INT32,2,little,,ok
+sp2,SP접착기 2호기,5021,6,data,LOT No.,R771,hr,771,400772,,STRING,5,,little,ok
+sp2,SP접착기 2호기,5021,6,data,품명,D8960,hr,8960,408961,,STRING,8,,little,ok
+sp2,SP접착기 2호기,5021,6,data,택타임,D1000,hr,1000,401001,,UINT16,1,,,ok
+sp2,SP접착기 2호기,5021,6,alarm,비상정지알람,M400,coil,400,401,,BOOL,,,,ok
+sp2,SP접착기 2호기,5021,6,alarm,에어압력 저하,M401,coil,401,402,,BOOL,,,,ok
+sp2,SP접착기 2호기,5021,6,alarm,흡인압력 저하,M402,coil,402,403,,BOOL,,,,ok
+sp2,SP접착기 2호기,5021,6,alarm,제어 BOX1 내부 온도 이상,M412,coil,412,413,,BOOL,,,,ok
+sp2,SP접착기 2호기,5021,6,alarm,수납부 이재 취출 미스,M612,coil,612,613,,BOOL,,,,ok
+sp2,SP접착기 2호기,5021,6,alarm,제어 BOX2 내부 온도 이상,M413,coil,413,414,,BOOL,,,,ok
+sp2,SP접착기 2호기,5021,6,alarm,PK 히터팩 이상,M415,coil,415,416,,BOOL,,,,ok
+sp2,SP접착기 2호기,5021,6,alarm,서보앰프 전원(U101),M436,coil,436,437,,BOOL,,,,ok
+sp2,SP접착기 2호기,5021,6,alarm,메인모터 전원,M437,coil,437,438,,BOOL,,,,ok
+sp2,SP접착기 2호기,5021,6,alarm,서보앰프 전원(U102),M451,coil,451,452,,BOOL,,,,ok
+sp2,SP접착기 2호기,5021,6,alarm,서보앰프 전원(U103),M452,coil,452,453,,BOOL,,,,ok
+sp2,SP접착기 2호기,5021,6,alarm,AC100V 전원,M453,coil,453,454,,BOOL,,,,ok
+sp2,SP접착기 2호기,5021,6,alarm,도포 XG-X사이클타임 아웃,M518,coil,518,519,,BOOL,,,,ok
+sp2,SP접착기 2호기,5021,6,alarm,도포 XG-X 장치 이상 (전원 투입시),M519,coil,519,520,,BOOL,,,,ok
+sp2,SP접착기 2호기,5021,6,alarm,수납 푸셔 제품 복귀,M571,coil,571,572,,BOOL,,,,ok
+sp2,SP접착기 2호기,5021,6,alarm,SP 연속 선단 워크 없음,M600,coil,600,601,,BOOL,,,,ok
+sp2,SP접착기 2호기,5021,6,alarm,SP 연속 탑재미스,M601,coil,601,602,,BOOL,,,,ok
+sp2,SP접착기 2호기,5021,6,alarm,DR 연속 선단 워크 없음,M602,coil,602,603,,BOOL,,,,ok
+sp2,SP접착기 2호기,5021,6,alarm,DR 연속 탑재미스,M603,coil,603,604,,BOOL,,,,ok
+sp2,SP접착기 2호기,5021,6,alarm,CAM1 도포 형상.연속 NG,M604,coil,604,605,,BOOL,,,,ok
+sp2,SP접착기 2호기,5021,6,alarm,CAM2 도포 형상.연속 NG,M605,coil,605,606,,BOOL,,,,ok
+sp2,SP접착기 2호기,5021,6,alarm,히터부 이재취출 미스,M614,coil,614,615,,BOOL,,,,ok
+tp1,6면측정TP기 1호기,5026,7,data,가동중,MR13,coil,13,14,,BOOL,,,,ok
+tp1,6면측정TP기 1호기,5026,7,data,투입수,ZF1050,hr,1050,401051,,INT32,2,little,,ok
+tp1,6면측정TP기 1호기,5026,7,data,양품수,ZF1052,hr,1052,401053,,INT32,2,little,,ok
+tp1,6면측정TP기 1호기,5026,7,data,전체 불량수,ZF1070,hr,1070,401071,,INT32,2,little,,ok
+tp1,6면측정TP기 1호기,5026,7,data,RDC 불량수,ZF1072,hr,1072,401073,,INT32,2,little,,ok
+tp1,6면측정TP기 1호기,5026,7,data,L 불량수,ZF1074,hr,1074,401075,,INT32,2,little,,ok
+tp1,6면측정TP기 1호기,5026,7,data,Z 불량수,ZF1076,hr,1076,401077,,INT32,2,little,,ok
+tp1,6면측정TP기 1호기,5026,7,data,자세 불량수,ZF1078,hr,1078,401079,,INT32,2,little,,ok
+tp1,6면측정TP기 1호기,5026,7,data,단면 불량수,ZF1080,hr,1080,401081,,INT32,2,little,,ok
+tp1,6면측정TP기 1호기,5026,7,data,측면 불량수,ZF1082,hr,1082,401083,,INT32,2,little,,ok
+tp1,6면측정TP기 1호기,5026,7,data,계선 불량수,ZF1084,hr,1084,401085,,INT32,2,little,,ok
+tp1,6면측정TP기 1호기,5026,7,data,저면 불량수,ZF1086,hr,1086,401087,,INT32,2,little,,ok
+tp1,6면측정TP기 1호기,5026,7,data,파이널 불량수,ZF1088,hr,1088,401089,,INT32,2,little,,ok
+tp1,6면측정TP기 1호기,5026,7,data,품명,DM1160,hr,1160,401161,,STRING,5,,little,ok
+tp1,6면측정TP기 1호기,5026,7,data,택타임,ZF1802,hr,1802,401803,,INT32,2,little,,ok
+tp1,6면측정TP기 1호기,5026,7,alarm,AM1:BOX1 온도이상,LR10300,coil,10300,10301,,BOOL,,,,ok
+tp1,6면측정TP기 1호기,5026,7,alarm,AM2:BOX2 온도이상,LR10301,coil,10301,10302,,BOOL,,,,ok
+tp1,6면측정TP기 1호기,5026,7,alarm,AM3:BOX3 온도이상,LR10302,coil,10302,10303,,BOOL,,,,ok
+tp1,6면측정TP기 1호기,5026,7,alarm,AM4:BOX4 온도이상,LR10303,coil,10303,10304,,BOOL,,,,ok
+tp1,6면측정TP기 1호기,5026,7,alarm,Centering1 위치결정이상,LR11312,coil,11312,11313,,BOOL,,,,ok
+tp1,6면측정TP기 1호기,5026,7,alarm,Centering2 위치결정이상,LR11400,coil,11400,11401,,BOOL,,,,ok
+tp1,6면측정TP기 1호기,5026,7,alarm,Centering3 위치결정이상,LR11404,coil,11404,11405,,BOOL,,,,ok
+tp1,6면측정TP기 1호기,5026,7,alarm,Cycle Time out,LR10204,coil,10204,10205,,BOOL,,,,ok
+tp1,6면측정TP기 1호기,5026,7,alarm,Iron Cycle Time out,LR14014,coil,14014,14015,,BOOL,,,,ok
+tp1,6면측정TP기 1호기,5026,7,alarm,L측정 연속NG,LR13803,coil,13803,13804,,BOOL,,,,ok
+tp1,6면측정TP기 1호기,5026,7,alarm,Main Air Pressure이상,LR10004,coil,10004,10005,,BOOL,,,,ok
+tp1,6면측정TP기 1호기,5026,7,alarm,Pallet 취출이상,LR13004,coil,13004,13005,,BOOL,,,,ok
+tp1,6면측정TP기 1호기,5026,7,alarm,Rdc측정 연속NG,LR13801,coil,13801,13802,,BOOL,,,,ok
+tp1,6면측정TP기 1호기,5026,7,alarm,Recovery 흡착이상,LR14113,coil,14113,14114,,BOOL,,,,ok
+tp1,6면측정TP기 1호기,5026,7,alarm,Scraper이송중 Chute 만재검출,LR13102,coil,13102,13103,,BOOL,,,,ok
+tp1,6면측정TP기 1호기,5026,7,alarm,Vaccum Pressure이상,LR10005,coil,10005,10006,,BOOL,,,,ok
+tp1,6면측정TP기 1호기,5026,7,alarm,Z측정 연속NG,LR13805,coil,13805,13806,,BOOL,,,,ok
+tp1,6면측정TP기 1호기,5026,7,alarm,계선카메라 Error신호검출,LR14304,coil,14304,14305,,BOOL,,,,ok
+tp1,6면측정TP기 1호기,5026,7,alarm,계선카메라 연속NG,LR14306,coil,14306,14307,,BOOL,,,,ok
+tp1,6면측정TP기 1호기,5026,7,alarm,단면카메라1 Error신호검출,LR14204,coil,14204,14205,,BOOL,,,,ok
+tp1,6면측정TP기 1호기,5026,7,alarm,단면카메라1 연속NG,LR14206,coil,14206,14207,,BOOL,,,,ok
+tp1,6면측정TP기 1호기,5026,7,alarm,단면카메라2 Error신호검출,LR14208,coil,14208,14209,,BOOL,,,,ok
+tp1,6면측정TP기 1호기,5026,7,alarm,단면카메라2 연속NG,LR14210,coil,14210,14211,,BOOL,,,,ok
+tp1,6면측정TP기 1호기,5026,7,alarm,분리부 워크 미도착,LR13108,coil,13108,13109,,BOOL,,,,ok
+tp1,6면측정TP기 1호기,5026,7,alarm,비상정지,LR10000,coil,10000,10001,,BOOL,,,,ok
+tp1,6면측정TP기 1호기,5026,7,alarm,워크취출이상,LR13400,coil,13400,13401,,BOOL,,,,ok
+tp1,6면측정TP기 1호기,5026,7,alarm,자세확인카메라 연속NG,LR14202,coil,14202,14203,,BOOL,,,,ok
+tp1,6면측정TP기 1호기,5026,7,alarm,자세확인카메라Error신호검출,LR14200,coil,14200,14201,,BOOL,,,,ok
+tp1,6면측정TP기 1호기,5026,7,alarm,저면카메라 Error신호검출,LR14308,coil,14308,14309,,BOOL,,,,ok
+tp1,6면측정TP기 1호기,5026,7,alarm,저면카메라 연속NG,LR14310,coil,14310,14311,,BOOL,,,,ok
+tp1,6면측정TP기 1호기,5026,7,alarm,측면카메라1 Error신호검출,LR14212,coil,14212,14213,,BOOL,,,,ok
+tp1,6면측정TP기 1호기,5026,7,alarm,측면카메라1 연속NG,LR14214,coil,14214,14215,,BOOL,,,,ok
+tp1,6면측정TP기 1호기,5026,7,alarm,측면카메라2 Error신호검출,LR14300,coil,14300,14301,,BOOL,,,,ok
+tp1,6면측정TP기 1호기,5026,7,alarm,측면카메라2 연속NG,LR14302,coil,14302,14303,,BOOL,,,,ok
+tp1,6면측정TP기 1호기,5026,7,alarm,파이널카메라 Error신호검출,LR14312,coil,14312,14313,,BOOL,,,,ok
+tp1,6면측정TP기 1호기,5026,7,alarm,파이널카메라 Shutter 개폐LS이상,LR14110,coil,14110,14111,,BOOL,,,,ok
