@@ -1,0 +1,2 @@
+# name  user@ip   (used as: ./remote.sh <name> start all). Copy to remote.hosts and edit; remote.hosts is not committed.
+office  portacon@192.168.10.97

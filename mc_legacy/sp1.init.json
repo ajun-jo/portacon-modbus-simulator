@@ -1,0 +1,97 @@
+[
+ {
+  "dev": "M",
+  "addr": 5,
+  "type": "BOOL",
+  "value": 1,
+  "tag": "가동중"
+ },
+ {
+  "dev": "D",
+  "addr": 1104,
+  "type": "INT32",
+  "value": 120345,
+  "tag": "투입수"
+ },
+ {
+  "dev": "D",
+  "addr": 1106,
+  "type": "INT32",
+  "value": 120308,
+  "tag": "양품수"
+ },
+ {
+  "dev": "D",
+  "addr": 1108,
+  "type": "INT32",
+  "value": 37,
+  "tag": "전체 불량수"
+ },
+ {
+  "dev": "D",
+  "addr": 1110,
+  "type": "INT32",
+  "value": 12,
+  "tag": "도포형상 불량수"
+ },
+ {
+  "dev": "D",
+  "addr": 1114,
+  "type": "INT32",
+  "value": 3,
+  "tag": "도포타임아웃 SP수"
+ },
+ {
+  "dev": "D",
+  "addr": 1116,
+  "type": "INT32",
+  "value": 9,
+  "tag": "DR탑재 불량수"
+ },
+ {
+  "dev": "D",
+  "addr": 1158,
+  "type": "INT32",
+  "value": 2,
+  "tag": "히터테이블 인덱스 타임아웃수"
+ },
+ {
+  "dev": "D",
+  "addr": 1172,
+  "type": "INT32",
+  "value": 5,
+  "tag": "히터 이재 취출미스수"
+ },
+ {
+  "dev": "D",
+  "addr": 1168,
+  "type": "INT32",
+  "value": 6,
+  "tag": "수납 이재 취출미스수"
+ },
+ {
+  "dev": "R",
+  "addr": 771,
+  "type": "STRING",
+  "words": 5,
+  "value": "LOT2611A01",
+  "byte_order": "LH",
+  "tag": "LOT No."
+ },
+ {
+  "dev": "D",
+  "addr": 8960,
+  "type": "STRING",
+  "words": 8,
+  "value": "ADL2012-SP-A01",
+  "byte_order": "LH",
+  "tag": "품명"
+ },
+ {
+  "dev": "D",
+  "addr": 1000,
+  "type": "UINT16",
+  "value": 42,
+  "tag": "택타임"
+ }
+]

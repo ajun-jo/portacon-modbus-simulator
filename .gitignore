@@ -1,0 +1,7 @@
+*.log
+*.pid
+*.state.json
+*.state.json.tmp
+*.delay
+__pycache__/
+remote.hosts
