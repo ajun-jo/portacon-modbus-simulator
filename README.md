@@ -19,42 +19,51 @@ follows.
 
 ## Testing a Studio project on a PortaCON
 
-1. **Export the project JSON from Studio and build the simulator files** (one per Studio port, every device on it
-   by slave id, every enabled datapoint):
-   ```bash
-   python3 studio_to_init.py "metadata/studio/포타콘 미들웨어 크래쉬 버그 테스팅.json"
-   ```
-   ```
-   machines/com1.init.json  COM1 pty:ttyCOM1, control port 6101
-     slave 1 port 1 device: dp82=ir 70 FLOAT32, dp81=ir 90 FLOAT32, dp125=ir 106 FLOAT32
-   machines/com2.init.json  COM2 pty:ttyCOM2, control port 6102
-   …
-   ```
-   Each DP starts at a value that identifies it (dp81 = 81.5), so you can tell DPs apart in the cloud.
-2. **Start them on the PortaCON**, with the web UI:
-   ```bash
-   ./remote.sh portacon@192.168.10.97 start com1 com2 com3
-   ./remote.sh portacon@192.168.10.97 ui          # http://192.168.10.97:8080
-   ```
-3. **Point ptcsw at them in IoTLink's deploy config**, not only in the file on the PortaCON (every cloud deploy rewrites
-   application.json). Use the full absolute path; relative paths fail silently:
+**Once per PortaCON** (from a laptop with this repo; `ssh-copy-id portacon@<ip>` first):
 
-   | Studio port | application.json key | Simulator path |
+```bash
+./remote.sh portacon@192.168.10.97 install
+```
+
+This copies the simulator to `~/modbus-plc-simulator`, starts the web UI on port 8080, and adds a cron `@reboot`
+entry so whatever was running comes back after a reboot (such as the one after a config-only deploy). No sudo needed.
+
+**Then, for each test, everything happens in the browser and IoTLink:**
+
+1. **Open `http://<PortaCON IP>:8080` → Studio project → Load Studio project…** and pick the project JSON you built
+   (exported from Porta Studio). The simulator replaces its COM1–3 simulators with this project's devices and DPs,
+   at fresh starting values, and lists the serial paths.
+2. **In IoTLink, set those paths in the build's application.json and deploy.** Set them in the deploy config, not
+   only on the PortaCON: every cloud deploy rewrites the file. Full absolute paths, no `//` comments:
+
+   | Studio port | application.json key | Path |
    |---|---|---|
    | COM1 | `interfaces.rs232.port` | `/home/portacon/modbus-plc-simulator/ttyCOM1` |
    | COM2 | `interfaces.rs485.port` | `/home/portacon/modbus-plc-simulator/ttyCOM2` |
    | COM3 | `interfaces.com3.port` | `/home/portacon/modbus-plc-simulator/ttyCOM3` |
-   | TCP | the device's IP and port | `127.0.0.1` and the file's port |
 
-   Baud and parity don't matter on a pty (so a pty can't catch a wrong serial setting).
-4. **Deploy.** A config-only deploy reboots the PortaCON, which stops the simulators: start them again (step 2).
-   Values and write counts are kept across restarts.
-5. **Check:** the machine's badge in the web UI turns green ("read 1s ago") and the log shows ptcsw's batch reads.
-   On the PortaCON, `journalctl -u ptc_auto_service.service -f` should show `registered slot N … with K datapoints`
-   and no `batch read … failed: Connection timed out`.
+3. **Open IoTLink → data analysis and compare** with the web UI's **Expected in IoTLink** column. Every DP's value
+   says where it came from, so a wrong address, port or word order shows up as a wrong number, not just a missing one:
 
-When the project changes in Studio, export it again and rerun `studio_to_init.py`. It keeps the values, control
-ports and schedules already in the files. `--prefix crash` names the files `crash-com1`, … to keep several projects.
+   | Type | Served value | Example |
+   |---|---|---|
+   | FLOAT32 | `<dp>.<port><slave>` | dp81 on COM1, slave 1 → **81.11**; dp81 on COM3, slave 2 → **81.32** |
+   | INT32 / UINT32 | `<dp><port><slave:3 digits>` | dp81 on COM1, slave 1 → **811001** |
+   | INT16 / UINT16 | `<dp><port>` | dp81 on COM1 → **811** |
+   | BOOL | 1 | |
+
+   The expected column applies the DP's Studio expression (`*5` on 81.11 → 405.55). The **ptcsw reading it** column
+   shows when ptcsw last read each DP, so a DP that never shows in IoTLink can be told apart from one ptcsw never
+   asks for. Write-only DPs never appear on dashboards; their write counts are in the same table.
+
+If a value in IoTLink is wrong:
+- **byte- or word-swapped number** (81.11 shows as 2.4e-41 or similar): the DP's word order in Studio doesn't match.
+- **another DP's or port's number** (81.31 where 81.11 is expected): the address or the port is mixed up.
+- **nothing at all**, and "not read yet": ptcsw isn't asking. Check the path in application.json and the
+  `registered slot` lines in `journalctl -u ptc_auto_service.service -f`.
+
+To try other values, delays or schedules, click a port in the left column. `python3 studio_to_init.py <project.json>`
+does the same as the upload from the command line.
 
 ## Web UI
 
@@ -172,6 +181,7 @@ original MC simulator is in `mc_legacy/`.
 
 ## Not done yet (brief "Should" items)
 
-Building the device map is done from the Studio export (#10). Still to do: exception replies on chosen addresses
-beyond the fixed refuse range (#11), going silent on demand (#12), and running as a service so a reboot doesn't stop
-it (#14). Requests arriving during a delay are already dropped on a pty (#13), as the reference simulator does.
+Building the device map is done from the Studio export (#10), and `install` brings the simulators back after a reboot
+(#14, through cron rather than systemd, which needs sudo). Still to do: exception replies on chosen addresses beyond
+the fixed refuse range (#11) and going silent on demand (#12). Requests arriving during a delay are already dropped on
+a pty (#13), as the reference simulator does.

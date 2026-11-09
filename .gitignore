@@ -9,3 +9,8 @@ remote.hosts
 *.log.1
 *.schedule.json
 tty*
+*.reads.json
+boot.log
+studio_project.json
+*.list
+autostart.list.tmp

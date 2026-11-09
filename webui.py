@@ -27,6 +27,9 @@ from modbus_client import Client, ModbusException  # noqa: E402
 from modbus_plc_sim import (  # noqa: E402
     FC_RESET_COUNTS, decode_value, encode_value, find_tag, load_config, set_bit, table_name, word_count,
 )
+import studio_to_init  # noqa: E402
+
+PROJECT_FILE = os.path.join(HERE, "studio_project.json")  # which Studio project is loaded, and when
 
 READ_LINE = re.compile(r"^(\S+) (tcp \S+|udp \S+|pty) (TCP|RTU|ASCII) unit (\d+) fc0[1-4] read ")
 
@@ -252,6 +255,79 @@ class Machine:
         return out
 
 
+def generated_names():
+    """Simulator files made from a Studio project (by the UI or studio_to_init.py)."""
+    out = []
+    for n in machine_names():
+        c = read_json(os.path.join(HERE, "machines", n + ".init.json"), {})
+        if str(c.get("comment", "")).startswith(studio_to_init.GENERATED):
+            out.append(n)
+    return out
+
+
+def project_info():
+    """The loaded Studio project: its ports, and for every DP what's served and what IoTLink should show."""
+    info = read_json(PROJECT_FILE, {})
+    names = [n for n in info.get("files", []) if n in machine_names()] or generated_names()
+    ports, dps = [], []
+    now = time.time()
+    for n in names:
+        try:
+            m = Machine(n)
+        except SystemExit as ex:
+            ports.append({"name": n, "error": str(ex)})
+            continue
+        s = m.summary()
+        ports.append({k: s[k] for k in ("name", "title", "kind", "link", "port", "studio_port", "application_json",
+                                         "running", "poll", "devices")})
+        reads = read_json(path(n, ".reads.json"), {}) if s["running"] else {}
+        for dev in m.detail()["devices"]:
+            seen = reads.get(str(dev["unit"]), {})
+            for t in dev["tags"]:
+                src = next((x for x in m.cfg["devices"][dev["unit"]]["tags"] if x["tag"] == t["tag"]), {})
+                row = {"sim": n, "port": s["studio_port"] or n, "unit": dev["unit"], "device": dev["name"],
+                       "dp": t["tag"], "table": t["table"], "addr": t["addr"], "type": t["type"],
+                       "word_order": t["word_order"], "value": t.get("value"), "expression": t["expression"],
+                       "report_ms": src.get("report_ms"), "write_only": bool(src.get("write_only")),
+                       "writes": t["writes"], "running": s["running"]}
+                if row["value"] is not None:
+                    try:
+                        row["expected"] = studio_to_init.apply_expression(t["expression"], row["value"])
+                    except ValueError as ex:
+                        row["expected_error"] = str(ex)
+                if t["tag"] in seen:
+                    row["read_ago"] = round(now - seen[t["tag"]][0], 1)
+                    row["read_count"] = seen[t["tag"]][1]
+                dps.append(row)
+    return {"name": info.get("name"), "loaded": info.get("loaded"), "notes": info.get("notes", []),
+            "ports": ports, "dps": dps}
+
+
+def load_project(name, proj):
+    """Replace the running Studio simulators with ones for this project, at their starting values."""
+    if not isinstance(proj, dict) or not isinstance(proj.get("interfaces"), dict):
+        raise ValueError("that isn't a Porta Studio project export (no \"interfaces\")")
+    old = generated_names()
+    for n in old:  # the new project takes over the COM ports, so stop every Studio simulator first
+        run_sh("stop", n)
+    files, notes = studio_to_init.generate(proj, os.path.join(HERE, "machines"), fresh=True, source=name)
+    if not files:
+        raise ValueError("no Modbus devices with enabled datapoints in %s%s" % (name, (": " + "; ".join(notes))
+                                                                               if notes else ""))
+    new = [f for f, _ in files]
+    for n in old:
+        if n not in new and "-" not in n:  # files from the last project loaded here (prefixed ones are kept)
+            os.remove(os.path.join(HERE, "machines", n + ".init.json"))
+    for n in new:
+        for ext in (".state.json", ".reads.json", ".schedule.json", ".delay"):
+            if os.path.exists(path(n, ext)):
+                os.remove(path(n, ext))
+    write_json(PROJECT_FILE, {"name": name, "loaded": time.strftime("%Y-%m-%d %H:%M:%S"), "files": new,
+                              "notes": notes})
+    out = [run_sh(n) for n in new]
+    return out
+
+
 def run_sh(*args):
     p = subprocess.run(["./run.sh"] + list(args), cwd=HERE, capture_output=True, text=True, timeout=120)
     return (p.stdout + p.stderr).strip()
@@ -284,6 +360,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if not parts:
                 return self.send(200, PAGE.encode(), "text/html; charset=utf-8")
+            if parts == ["api", "project"]:
+                return self.send(200, project_info())
             if parts == ["api", "machines"]:
                 out = []
                 for n in machine_names():
@@ -311,6 +389,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             n = int(self.headers.get("Content-Length") or 0)
             body = json.loads(self.rfile.read(n) or b"{}") if n else {}
+            if parts == ["api", "project"]:
+                load_project(str(body.get("name") or "project.json"), body.get("project"))
+                return self.send(200, project_info())
             if parts[:2] != ["api", "m"] or len(parts) != 4:
                 return self.send(404, {"error": "not found"})
             name, action = parts[2], parts[3]
@@ -442,6 +523,13 @@ tr.changed td.val { animation: flash 1.6s ease-out; }
   white-space: pre-wrap; word-break: break-all; background: var(--bg); border-radius: 8px; }
 .log .w { color: var(--accent); } .log .e { color: var(--bad); } .log .c { color: var(--muted); } .log .d { color: var(--warn); }
 .empty { padding: 40px; text-align: center; color: var(--muted); }
+.mcard.project { border-style: dashed; }
+a { color: var(--accent); }
+.mcard.project.sel { border-style: solid; }
+.steps { margin: 0; padding: 12px 16px 4px 34px; font-size: 13.5px; }
+.steps li { margin: 0 0 6px; }
+.expected { font-weight: 650; font-variant-numeric: tabular-nums; }
+.port-row td { background: var(--bg); font-weight: 600; font-size: 13px; }
 #toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg);
   padding: 8px 14px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 90vw; z-index: 10; }
 #toast.show { opacity: 1; }
@@ -462,7 +550,7 @@ tr.changed td.val { animation: flash 1.6s ease-out; }
     <div id="head"><div class="empty">Loading…</div></div>
     <div id="body"></div>
     <div class="section" id="controls"></div>
-    <div class="section"><h3>Request log
+    <div class="section" id="logsec"><h3>Request log
       <label class="muted" style="font-size:13px;font-weight:400"><input type="checkbox" id="quiet" checked onchange="loadLog()"> hide connect/disconnect</label>
       <label class="muted" style="font-size:13px;font-weight:400"><input type="checkbox" id="live" checked> live</label></h3>
       <pre class="log" id="log"></pre></div>
@@ -474,7 +562,9 @@ const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const store = { get(k, d) { try { return localStorage.getItem(k) ?? d; } catch (e) { return d; } },
                 set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
-let machines = [], sel = store.get("sel", null), tab = store.get("tab", "all"), unitSel = {}, filter = "";
+const PROJECT = "__project__";
+let project = null;
+let machines = [], sel = store.get("sel", PROJECT), tab = store.get("tab", "all"), unitSel = {}, filter = "";
 let detail = null, prev = {}, controlsFor = null, draft = null;
 $("#host").textContent = location.host;
 
@@ -509,6 +599,10 @@ function endpointShort(m) {
 }
 
 function renderMachines() {
+  const pr = project && project.name;
+  const projectCard = `<div class="mcard project ${sel === PROJECT ? "sel" : ""}" onclick="pick(PROJECT)">
+      <div class="row1"><span class="name">Studio project</span></div>
+      <div class="meta">${pr ? esc(project.name) : "load one to start"}</div></div>`;
   const groups = [["Serial (pty)", machines.filter(m => m.kind === "pty")], ["TCP", machines.filter(m => m.kind !== "pty")]];
   $("#machines").innerHTML = groups.filter(g => g[1].length).map(([label, ms]) => `<div class="group-label">${label}</div>` + ms.map(m => `
     <div class="mcard ${m.name === sel ? "sel" : ""}" onclick="pick('${m.name}')">
@@ -518,8 +612,9 @@ function renderMachines() {
         ${delayText(m.delay) ? `<span class="pill warn">delay ${esc(delayText(m.delay))}</span>` : ""}
         ${m.schedules && m.schedules.length ? `<span class="pill info">${m.schedules.length} schedule${m.schedules.length > 1 ? "s" : ""}</span>` : ""}`}</div>
     </div>`).join("")).join("");
+  $("#machines").insertAdjacentHTML("afterbegin", projectCard);
 }
-function pick(name) { sel = name; store.set("sel", name); prev = {}; controlsFor = null; renderMachines(); refresh(); }
+function pick(name) { if (name === PROJECT) $("#head").innerHTML = ""; sel = name; store.set("sel", name); prev = {}; controlsFor = null; renderMachines(); refresh(); }
 
 function copy(text) {
   (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).then(() => toast("Copied " + text), () => toast(text));
@@ -699,9 +794,12 @@ async function loadLog() {
 
 async function refresh(withControls) {
   try {
-    machines = await api("/api/machines");
-    if (!sel || !machines.some(m => m.name === sel)) sel = machines[0]?.name;
+    [machines, project] = await Promise.all([api("/api/machines"), api("/api/project")]);
+    if (!sel || (sel !== PROJECT && !machines.some(m => m.name === sel))) sel = PROJECT;
     renderMachines();
+    const isProject = sel === PROJECT;
+    $("#controls").style.display = $("#logsec").style.display = isProject ? "none" : "";
+    if (isProject) { renderProject(project); return; }
     if (!sel) { $("#head").innerHTML = '<div class="empty">No simulator files in machines/.</div>'; return; }
     detail = await api(`/api/m/${sel}`);
     renderHead(detail.machine);
@@ -709,6 +807,71 @@ async function refresh(withControls) {
     if (withControls || controlsFor !== sel) { controlsFor = sel; draft = null; renderControls(detail); }
     if ($("#live").checked) loadLog();
   } catch (e) { toast("Can't reach the UI server: " + e.message, true); }
+}
+function readCell(r) {
+  if (!r.running) return '<span class="pill">simulator stopped</span>';
+  if (r.write_only) return `<span class="pill info">write-only: ${r.writes} write${r.writes === 1 ? "" : "s"}</span>`;
+  if (r.read_ago === undefined) return '<span class="pill warn">not read yet</span>';
+  const fresh = r.read_ago < Math.max(30, (r.report_ms || 0) / 1000 * 3);
+  return `<span class="pill ${fresh ? "ok" : "warn"}" title="${r.read_count} reads">read ${ago(r.read_ago)}</span>`;
+}
+function fmtNum(v) { return v === undefined || v === null ? "" : String(v); }
+function renderProject(p) {
+  $("#head").innerHTML = `<div class="detail-head">
+    <div style="min-width:0">
+      <h2>Studio project ${p.name ? `<span class="muted" style="font-weight:400">${esc(p.name)}</span>` : ""}</h2>
+      <div class="muted" style="font-size:13px">${p.loaded ? "loaded " + esc(p.loaded) : p.ports.length ? "built from the command line" : "No project loaded yet."}</div>
+    </div>
+    <div class="actions">
+      <input type="file" id="pfile" accept=".json,application/json" style="display:none" onchange="loadProject(this.files[0])">
+      <button class="primary" onclick="$('#pfile').click()">Load Studio project…</button>
+    </div></div>
+    <ol class="steps">
+      <li><b>Load</b> the project JSON you built and deployed (export it from Porta Studio). The simulator serves every enabled DP.</li>
+      <li><b>In IoTLink</b>, set the serial paths below in the build's application.json and deploy. After the PortaCON reboots, the simulator starts again by itself.</li>
+      <li><b>Open IoTLink → data analysis.</b> Each DP should show the value in <b>Expected in IoTLink</b>. A value of 81.11 means dp81 on COM1, slave 1, so a mixed-up address or port shows up as the wrong number.</li>
+    </ol>`;
+  if (!p.ports.length) { $("#body").innerHTML = '<div class="empty">Load the Studio project JSON to start.</div>'; return; }
+  const ports = p.ports.map(x => x.error ? `<tr><td>${esc(x.name)}</td><td colspan="3"><span class="pill bad">${esc(x.error)}</span></td></tr>` : `<tr>
+      <td><b>${esc(x.studio_port || x.name)}</b> <span class="muted">${esc(x.name)}</span></td>
+      <td class="mono">${esc(x.kind === "pty" ? x.application_json : "device IP / port")}</td>
+      <td>${x.kind === "pty" ? `<span class="mono">${esc(x.link)}</span> <button class="small" onclick="copy('${esc(x.link)}')">Copy</button>`
+                              : `<span class="mono">127.0.0.1 : ${x.port}</span>`}</td>
+      <td>${pollPill(x)}</td></tr>`).join("");
+  let last = null;
+  const rows = p.dps.map(r => {
+    const head = r.port + "/" + r.unit;
+    const sep = head !== last ? `<tr class="port-row"><td colspan="9">${esc(r.port)} · slave ${r.unit}${r.device ? " · " + esc(r.device) : ""}
+      <a href="#" onclick="pick('${r.sim}');return false" style="font-weight:400;margin-left:8px">change values, delays…</a></td></tr>` : "";
+    last = head;
+    return sep + `<tr>
+      <td><b>${esc(r.dp)}</b></td><td class="mono">${esc(r.table)} ${r.addr}</td>
+      <td class="mono">${esc(r.type)}${r.word_order && r.type !== "BOOL" && !/16/.test(r.type) ? " · " + esc(r.word_order) : ""}</td>
+      <td class="mono">${esc(fmtNum(r.value))}</td><td class="mono">${esc(r.expression || "—")}</td>
+      <td class="expected">${r.write_only ? '<span class="muted">not reported</span>' : r.expected_error ? `<span class="pill bad">${esc(r.expected_error)}</span>` : esc(fmtNum(r.expected))}</td>
+      <td class="muted">${r.report_ms ? r.report_ms / 1000 + " s" : ""}</td>
+      <td>${readCell(r)}</td>
+      <td class="num">${r.writes ? `<span class="pill ${r.writes > 1 ? "warn" : "info"}" title="writes from ptcsw">${r.writes} w</span>` : ""}</td></tr>`;
+  }).join("");
+  $("#body").innerHTML = `
+    <div class="section"><h3>Ports</h3><div class="tablewrap"><table>
+      <thead><tr><th>Port</th><th>application.json key</th><th>Set it to</th><th>ptcsw</th></tr></thead><tbody>${ports}</tbody></table></div></div>
+    <div class="section"><h3>Datapoints <span class="hint" style="font-weight:400">${p.dps.length} served; the table updates every 2 s</span></h3>
+      <div class="tablewrap"><table>
+      <thead><tr><th>DP</th><th>Address</th><th>Type</th><th>Served (raw)</th><th>Expression</th><th>Expected in IoTLink</th><th>Reported every</th><th>ptcsw reading it</th><th></th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="9" class="empty">No datapoints.</td></tr>'}</tbody></table></div></div>
+    ${p.notes.length ? `<div class="section"><h3>Notes from loading</h3><ul style="margin:0;padding-left:20px;font-size:13px">${p.notes.map(n => `<li>${esc(n)}</li>`).join("")}</ul></div>` : ""}`;
+}
+async function loadProject(file) {
+  if (!file) return;
+  let proj;
+  try { proj = JSON.parse(await file.text()); } catch (e) { $("#pfile").value = ""; return toast("That file isn't JSON: " + e.message, true); }
+  if (!confirm(`Load ${file.name}?\nIt replaces the Studio simulators (COM1-3) and starts them at fresh values.`)) { $("#pfile").value = ""; return; }
+  toast("Loading " + file.name + "…");
+  try { await api("/api/project", {name: file.name, project: proj}); toast("Loaded " + file.name); }
+  catch (e) { toast(e.message, true); }
+  $("#pfile").value = "";
+  refresh();
 }
 function setTab(g) { tab = g; store.set("tab", g); renderBody(detail); }
 

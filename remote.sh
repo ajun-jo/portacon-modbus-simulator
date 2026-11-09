@@ -3,6 +3,7 @@
 #   ./remote.sh <host> start all | start com1 sp1    copy the simulator there, then start (restart) them; values are kept
 #   ./remote.sh <host> stop all  | stop com1
 #   ./remote.sh <host> reset all | reset com1         back to the starting values and zero write counts
+#   ./remote.sh <host> install                       once per PortaCON: copy, start the web UI, restart all after reboots
 #   ./remote.sh <host> ui                            copy the simulator there and start the web UI: http://<ip>:8080
 #   ./remote.sh <host> status
 #   ./remote.sh <host> show wind1 | get wind1 투입수 | set wind1 투입수=5000 "단선 1-3=1"
@@ -19,7 +20,7 @@ cd "$(dirname "$0")"
 SSH=${REMOTE_SSH:-ssh}
 DIR=modbus-plc-simulator  # relative to the remote home directory
 
-usage() { sed -n '2,17p' "$0"; exit 1; }
+usage() { sed -n '2,18p' "$0"; exit 1; }
 [ $# -ge 2 ] || usage
 host=$1; cmd=$2; shift 2
 if [ -f remote.hosts ]; then
@@ -44,7 +45,7 @@ machines() {
 
 deploy() {
   COPYFILE_DISABLE=1 tar --no-xattrs --no-mac-metadata -czf - \
-    modbus_plc_sim.py modbus_client.py webui.py run.sh check_sim.py machines/*.init.json \
+    modbus_plc_sim.py modbus_client.py webui.py studio_to_init.py run.sh check_sim.py machines/*.init.json \
     | $SSH "$host" "mkdir -p $DIR && tar -xzf - -C $DIR"
   echo "copied the simulator to $host:~/$DIR"
 }
@@ -58,6 +59,13 @@ case $cmd in
   stop|reset)
     list=$(machines "$@")
     remote "./run.sh $cmd $list" ;;
+  install)
+    deploy
+    remote "./run.sh ui"
+    # cron (no sudo needed) runs ./run.sh boot after every reboot, e.g. the one after a config-only deploy
+    remote "(crontab -l 2>/dev/null | grep -v 'modbus-plc-simulator && ./run.sh boot'; echo '@reboot sleep 10; cd \$HOME/$DIR && ./run.sh boot >>boot.log 2>&1') | crontab -"
+    remote "crontab -l | grep 'run.sh boot'"
+    echo "installed. Open http://${host#*@}:8080 and load your Studio project there." ;;
   ui)
     deploy
     remote "./run.sh ui$(q "$@")"

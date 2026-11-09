@@ -354,6 +354,7 @@ class Memory:
         self.state_path = state_path
         self.units = {}   # unit -> {table: {addr: value}}
         self.writes = {}  # unit -> {tag name or "hr 10": count of master writes}
+        self.reads, self.reads_dirty = {}, False  # unit -> {tag: [last read time, count]} from the master
         self.refuse, self.refuse_code = list(refuse), refuse_code
 
     def tables(self, unit):
@@ -392,6 +393,22 @@ class Memory:
         if not hit:
             key = "%s %d" % (table, addr) + ("" if n == 1 else " x%d" % n)
             counts[key] = counts.get(key, 0) + 1
+
+    def note_read(self, unit, table, addr, n):
+        now = round(time.time(), 3)
+        seen = self.reads.setdefault(unit, {})
+        for t in self.tags(unit, table, addr, n):
+            seen[t["tag"]] = [now, seen.get(t["tag"], [0, 0])[1] + 1]
+            self.reads_dirty = True
+
+    def save_reads(self, path):
+        if not path or not self.reads_dirty:
+            return
+        self.reads_dirty = False
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({str(u): r for u, r in self.reads.items()}, f, ensure_ascii=False)
+        os.replace(tmp, path)
 
     def tags(self, unit, table, addr, n, whole=True):
         """Tags of this unit inside (whole=True) or touching (whole=False) table[addr .. addr+n-1]."""
@@ -645,6 +662,8 @@ def handle_pdu(pdu, mem, unit, who, control=False):
         bit = table in BIT_TABLES
         _check_qty(qty, MAX_READ_BITS if bit else MAX_READ_REGS)
         vals = mem.read(unit, table, addr, qty)
+        if not control:
+            mem.note_read(unit, table, addr, qty)
         log("%s read %s %d x%d = %s%s" % (who, table, addr, qty, fmt_values(table, vals),
                                           mem.describe(unit, table, addr, vals)))
         data = pack_bits(vals) if bit else struct.pack(">%dH" % qty, *vals)
@@ -1069,10 +1088,14 @@ def serve_pty(srv, link, framing):
     return path
 
 
-async def ticker(delay, schedules):
+async def ticker(delay, schedules, mem, reads_file):
+    n = 0
     while True:
         delay.tick()
         schedules.tick()
+        n += 1
+        if n % 10 == 0:
+            mem.save_reads(reads_file)
         await asyncio.sleep(0.1)
 
 
@@ -1085,6 +1108,7 @@ async def main():
     ap.add_argument("--refuse-code", type=int, help="exception code for refused writes (default 2)")
     ap.add_argument("--delay-file", help="JSON reply delays, re-read on change (see above)")
     ap.add_argument("--schedule-file", help="JSON list of schedules, re-read on change")
+    ap.add_argument("--reads-file", help="JSON of when the master last read each tag, written every second")
     ap.add_argument("--no-udp", action="store_true", help="TCP endpoints: don't also listen on UDP")
     a = ap.parse_args()
     if a.log:
@@ -1125,7 +1149,9 @@ async def main():
     servers.append(await asyncio.start_server(lambda r, w: srv.tcp_client(r, w, control=True),
                                               "127.0.0.1", cfg["control_port"]))
     log("control port 127.0.0.1:%d (modbus_client.py and the web UI)" % cfg["control_port"])
-    await ticker(delay, schedules)
+    if a.reads_file and os.path.exists(a.reads_file):
+        os.remove(a.reads_file)
+    await ticker(delay, schedules, mem, a.reads_file)
 
 
 def run():
