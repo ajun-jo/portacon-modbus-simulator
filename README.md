@@ -42,7 +42,7 @@ Each machine file records its real PLC under `real_plc` (make, IP, port, connect
 
 ```bash
 ./run.sh sp1                                   # start or restart one machine (a restart reloads the starting values)
-for m in sp1 sp2 wind1 wind2 wind3 wind4 tp1; do ./run.sh $m; done   # all seven
+./run.sh all                                   # every machine (./run.sh stop all to stop them)
 ./run.sh status
 ./run.sh stop sp1
 ```
@@ -50,6 +50,40 @@ for m in sp1 sp2 wind1 wind2 wind3 wind4 tp1; do ./run.sh $m; done   # all seven
 - `sp1.log` logs every request and decodes the tags in it, e.g. `read hr 1104 x2 = [D619 0001]  {투입수=120345}` or `read hr 22400 x1 = [0081]  {단선 1-1=1, …, 단선 1-8=1}`. Use it to see exactly what your server asked for.
 - `echo '{"default": 300}' > sp1.delay` delays every reply by 300 ms. The file is re-read when it changes; `rm sp1.delay` turns the delay off.
 - Writes to hr 9000–9099 and coil 9000–9099 get exception 04, for testing write-error handling.
+
+## Web UI
+
+The easiest way to use the simulator is the web UI. Start it on the portacon once, then anyone on the network opens it in a browser:
+
+```bash
+./remote.sh portacon@192.168.10.97 start all   # the simulators
+./remote.sh portacon@192.168.10.97 ui          # the UI, then open http://192.168.10.97:8080
+```
+
+- Pick a machine on the left: a green dot means it's running, and the badge shows when it was last read (from ptcsw or anyone else).
+- Change a value: switches for alarms and BOOL/BIT tags; type a number or string and press Enter for the rest. Values changed by your server flash yellow.
+- **Restart / reset values** puts the machine file's starting values back. **All alarms off** clears every alarm at once. **Reply delay** slows every reply, to test timeouts.
+- The request log at the bottom shows what your server asked for, with the tags decoded.
+- To run it on your own machine: `./run.sh all`, then `./run.sh ui` and open http://localhost:8080. `./run.sh stop ui` stops it.
+- There's no login: anyone who can reach port 8080 can change simulator values (and nothing else).
+
+## Running it on the portacon (from anyone's machine)
+
+`remote.sh` copies the simulator to a portacon over SSH and controls it from your laptop. ptcsw on the portacon then polls the simulator locally (`127.0.0.1:5020–5026`), so it doesn't matter whose laptop started it.
+
+```bash
+ssh-copy-id portacon@192.168.10.97                          # once per person, so SSH needs no password
+./remote.sh portacon@192.168.10.97 start all                # copy files to ~/modbus-plc-simulator there, start every machine
+./remote.sh portacon@192.168.10.97 ui                       # web UI at http://192.168.10.97:8080
+./remote.sh portacon@192.168.10.97 set wind1 "단선 1-3=1"   # show / get / set / read / write, as with modbus_client.py
+./remote.sh portacon@192.168.10.97 log wind1                # watch what ptcsw asks for (Ctrl+C to stop watching)
+./remote.sh portacon@192.168.10.97 stop all
+```
+
+- Identify a portacon by its IP. The hostname isn't unique: every unit is called `reComputer-R100x`.
+- To use short names, copy `remote.hosts.example` to `remote.hosts` and add a line like `office portacon@192.168.10.97`. Then `./remote.sh office start all` works. `remote.hosts` isn't committed, so each person keeps their own.
+- `start` copies the current machine files every time, so edits on your laptop take effect when you start again.
+- To use the simulator, point the device's PLC connection at `127.0.0.1` and the machine's simulator port and unit id. This is set wherever the device is configured: it isn't in `workspace/application.json`, which only has the MQTT link and device ids. Point it back at the real PLC IP afterwards. `remote.sh` doesn't touch ptcsw's config.
 
 ## Changing values while your server polls
 

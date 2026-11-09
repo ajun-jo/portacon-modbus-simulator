@@ -2,10 +2,20 @@
 # Starts or restarts one Modbus PLC simulator in the background. It survives logout but not a reboot.
 #   ./run.sh sp1                              start/restart with machines/sp1.init.json (port and unit id from the file)
 #   ./run.sh stop sp1                         stop it
+#   ./run.sh all / ./run.sh stop all          every machine in machines/
 #   ./run.sh status                           show which simulators are running
+#   ./run.sh ui / ./run.sh stop ui            web UI on port 8080 (./run.sh ui --port 8081 for another port)
 # A restart reloads the starting values and drops written ones.
 # <name>.delay sets a reply delay in ms and is re-read on change: echo '{"default": 300}' > sp1.delay
 cd "$(dirname "$0")"
+
+if [ "$1" = all ] || { [ "$1" = stop ] && [ "$2" = all ]; }; then
+  for f in machines/*.init.json; do
+    m=$(basename "$f" .init.json)
+    if [ "$1" = stop ]; then "$0" stop "$m"; else "$0" "$m" "${@:2}" | tail -n 1; fi
+  done
+  exit 0
+fi
 
 running() { [ -f "$1.pid" ] && kill -0 "$(cat "$1.pid")" 2>/dev/null; }
 
@@ -20,10 +30,24 @@ case "$1" in
       name=$(basename "$f" .init.json)
       if running "$name"; then echo "$name: running (pid $(cat "$name.pid"))"; else echo "$name: stopped"; fi
     done
+    running ui && echo "ui: running (pid $(cat ui.pid)), $(tail -n 1 ui.log | sed 's/^[^ ]* //')"
     exit 0 ;;
   ""|-h|--help)
-    sed -n '2,7p' "$0"; exit 1 ;;
+    sed -n '2,9p' "$0"; exit 1 ;;
 esac
+
+launcher=(nohup)
+command -v setsid >/dev/null && launcher=(setsid nohup)   # setsid exists on Linux, not macOS
+
+if [ "$1" = ui ]; then
+  shift
+  running ui && { kill "$(cat ui.pid)"; sleep 1; }
+  "${launcher[@]}" python3 -u webui.py "$@" >>ui.log 2>&1 </dev/null &
+  echo $! >ui.pid
+  sleep 1
+  if running ui; then tail -n 1 ui.log; else echo "ui failed to start:"; tail -n 5 ui.log; rm -f ui.pid; exit 1; fi
+  exit 0
+fi
 
 name=$1; shift
 [ -f "machines/$name.init.json" ] || { echo "no machines/$name.init.json (names: $(cd machines && ls *.init.json | sed "s/.init.json//" | tr "\n" " "))"; exit 1; }
@@ -31,8 +55,6 @@ if running "$name"; then
   kill "$(cat "$name.pid")"; sleep 1
 fi
 rm -f "$name.state.json"
-launcher=(nohup)
-command -v setsid >/dev/null && launcher=(setsid nohup)   # setsid exists on Linux, not macOS
 "${launcher[@]}" python3 -u modbus_plc_sim.py --init "$PWD/machines/$name.init.json" --state "$PWD/$name.state.json" \
   --refuse "hr:9000-9099,coil:9000-9099" --delay-file "$PWD/$name.delay" "$@" \
   >>"$name.log" 2>&1 </dev/null &
