@@ -6,6 +6,7 @@
 #   ./run.sh reset sp1 | reset all            back to the file's starting values (and zero write counts), restarting
 #   ./run.sh status                           which are running, and on what
 #   ./run.sh ui / ./run.sh stop ui            web UI on port 8080 (./run.sh ui --port 8081 for another port)
+#   ./run.sh silent com2 60                   no replies for 60 s (device down), without a restart; silent com2 0 ends it
 #   ./run.sh boot                             start whatever was running before a reboot (cron runs this @reboot)
 # Values and write counts are kept across restarts in <name>.state.json.
 # <name>.delay sets reply delays and <name>.schedule.json value schedules; both are re-read on change.
@@ -31,7 +32,8 @@ start() {
   running "$name" && { kill "$(cat "$name.pid")"; sleep 1; }
   "${launcher[@]}" python3 -u modbus_plc_sim.py --init "$PWD/machines/$name.init.json" --state "$PWD/$name.state.json" \
     --log "$PWD/$name.log" --delay-file "$PWD/$name.delay" --schedule-file "$PWD/$name.schedule.json" \
-    --reads-file "$PWD/$name.reads.json" \
+    --reads-file "$PWD/$name.reads.json" --reset-file "$PWD/$name.reset.json" \
+    --silent-file "$PWD/$name.silent.json" --writes-log "$PWD/$name.writes.log" \
     >>"$name.out" 2>&1 </dev/null &
   echo $! >"$name.pid"
   want "$name"
@@ -46,7 +48,7 @@ start() {
 list() { if [ "$1" = all ]; then names; else printf '%s\n' "$@"; fi; }
 
 case "$1" in
-  ""|-h|--help) sed -n '2,12p' "$0"; exit 1 ;;
+  ""|-h|--help) sed -n '2,13p' "$0"; exit 1 ;;
   status)
     for name in $(names); do
       ep=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("endpoint") or "tcp:%s" % json.load(open(sys.argv[1])).get("port"))' "machines/$name.init.json" 2>/dev/null)
@@ -61,6 +63,16 @@ case "$1" in
   reset)
     shift; [ $# -gt 0 ] || { echo "usage: ./run.sh reset <name>... | all"; exit 1; }
     for n in $(list "$@"); do rm -f "$n.state.json"; start "$n"; done
+    exit 0 ;;
+  silent)
+    name=${2:?usage: ./run.sh silent <name> <seconds>}; secs=${3:-60}
+    [ -f "machines/$name.init.json" ] || { echo "no machines/$name.init.json"; exit 1; }
+    if [ "$secs" -gt 0 ] 2>/dev/null; then
+      echo "{\"until\": $(( $(date +%s) + secs ))}" >"$name.silent.json.tmp" && mv "$name.silent.json.tmp" "$name.silent.json"
+      echo "$name: no replies for $secs s, until $(date -d "@$(( $(date +%s) + secs ))" +%H:%M:%S 2>/dev/null || date -r $(( $(date +%s) + secs )) +%H:%M:%S)"
+    else
+      rm -f "$name.silent.json"; echo "$name: answering again"
+    fi
     exit 0 ;;
   boot)
     rm -f ./*.pid   # from before the reboot: those process ids may belong to something else now

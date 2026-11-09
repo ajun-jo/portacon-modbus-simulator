@@ -26,6 +26,10 @@ Test controls:
     would; on TCP they queue.
   - Schedules (config "schedules", plus --schedule-file re-read on change) step values over time:
     {"unit": 1, "tag": "dp81", "values": [5, 10], "every_s": 5}
+  - --reset-file: [{"unit": 1, "table": "coil", "addr": 100, "after_s": 30}] puts an address back to 0 when the
+    master hasn't written it for that long (a receiver that needs the command repeated). Logged as RESET.
+  - --silent-file: {"until": <unix time>} stops all replies until then, without touching the endpoint.
+  - --writes-log: just the master's writes (with the time since the last write to that address) and RESETs.
   - --refuse (or "refuse" in the file) makes writes to chosen ranges answer with an exception, by default code 02
     for hr and coil 9000-9099. Reads still succeed.
   - --control-port (127.0.0.1 only) is a Modbus TCP port for people and tools: modbus_client.py and the web UI
@@ -100,6 +104,7 @@ class Log:
 
 
 log = Log()
+wlog = Log()  # --writes-log: only the master's writes and auto-resets, for checking write periods
 
 
 class ModbusError(Exception):
@@ -355,6 +360,8 @@ class Memory:
         self.units = {}   # unit -> {table: {addr: value}}
         self.writes = {}  # unit -> {tag name or "hr 10": count of master writes}
         self.reads, self.reads_dirty = {}, False  # unit -> {tag: [last read time, count]} from the master
+        self.last_write = {}  # (unit, table, addr) -> time.time() of the master's last write there
+        self.since_last = None  # seconds since the previous master write to the first address just written
         self.refuse, self.refuse_code = list(refuse), refuse_code
 
     def tables(self, unit):
@@ -383,6 +390,11 @@ class Memory:
             m[addr + i] = v & mask
         if master:
             self._count(unit, table, addr, len(values))
+            now = time.time()
+            prev = self.last_write.get((unit, table, addr))
+            self.since_last = None if prev is None else now - prev
+            for i in range(len(values)):
+                self.last_write[(unit, table, addr + i)] = now
 
     def _count(self, unit, table, addr, n):
         counts = self.writes.setdefault(unit, {})
@@ -618,6 +630,85 @@ class Schedules:
             self.mem.save()
 
 
+class AutoReset:
+    """Addresses that go back to 0 when the master hasn't written them for a while, like a receiver that drops a
+    command unless it is repeated: [{"unit": 1, "table": "coil", "addr": 100, "after_s": 30}, ...]
+    ("count" for several addresses). From --reset-file, re-read on change. Only the master's writes count."""
+
+    def __init__(self, mem, cfg, path):
+        self.mem, self.cfg = mem, cfg
+        self.file = Watched(path, "auto-reset")
+        self.rules, self.done = [], {}
+
+    def tick(self):
+        data = self.file.changed()
+        if data is not None:
+            items = data if isinstance(data, list) else data.get("resets", [])
+            rules = []
+            for r in items:
+                try:
+                    unit = int(r.get("unit") or (min(self.cfg["devices"]) if self.cfg["devices"] else 1))
+                    table, addr = table_name(r["table"]), int(r["addr"])
+                    count, after = int(r.get("count", 1)), float(r["after_s"])
+                    if after <= 0 or count < 1 or table not in ("coil", "hr"):
+                        raise ValueError("needs table coil or hr, count >= 1 and after_s > 0")
+                    rules.append((unit, table, addr, count, after))
+                except (ValueError, KeyError, TypeError) as ex:
+                    log("ignoring auto-reset %s: %s" % (json.dumps(r, ensure_ascii=False), ex))
+            self.rules = rules
+            log("auto-reset: %s" % ("; ".join("unit %d %s %d%s to 0 after %g s without a write"
+                                              % (u, t, a, " x%d" % n if n > 1 else "", s)
+                                              for u, t, a, n, s in rules) or "none"))
+        if not self.rules:
+            return
+        now = time.time()
+        changed = False
+        for unit, table, addr, count, after in self.rules:
+            last = max(self.mem.last_write.get((unit, table, addr + i), 0) for i in range(count))
+            key = (unit, table, addr)
+            if not last or self.done.get(key, 0) >= last or now - last < after:
+                continue
+            self.done[key] = now
+            before = self.mem.read(unit, table, addr, count)
+            self.mem.write(unit, table, addr, [0] * count, master=False)
+            msg = "RESET unit %d %s %d%s -> 0 (was %s; no write for %.3f s since %s.%03d)" % (
+                unit, table, addr, " x%d" % count if count > 1 else "", fmt_values(table, before), now - last,
+                time.strftime("%H:%M:%S", time.localtime(last)), int(last % 1 * 1000))
+            log("auto-reset: " + msg)
+            if wlog.f:
+                wlog(msg)
+            changed = True
+        if changed:
+            self.mem.save()
+
+
+class Silent:
+    """While --silent-file holds {"until": <unix time>} in the future, no request gets a reply, as if the device
+    were switched off; the endpoint (and its pty) stays as it is."""
+
+    def __init__(self, path):
+        self.file = Watched(path, "silent")
+        self.until, self.was, self.dropped = 0, False, 0
+
+    def tick(self):
+        data = self.file.changed()
+        if data is not None:
+            try:
+                self.until = float(data.get("until", 0)) if isinstance(data, dict) else 0
+            except (TypeError, ValueError):
+                self.until = 0
+        on = self.on()
+        if on and not self.was:
+            log("SILENT until %s: no replies (the device is 'down')" % time.strftime("%H:%M:%S", time.localtime(self.until)))
+            self.dropped = 0
+        elif self.was and not on:
+            log("silent period over: answering again (%d requests went unanswered)" % self.dropped)
+        self.was = on
+
+    def on(self):
+        return time.time() < self.until
+
+
 # ---------------------------------------------------------------- PDU handling
 
 def fmt_values(table, vals):
@@ -634,8 +725,13 @@ def _check_qty(qty, hi):
 
 def _write(mem, unit, who, table, addr, vals, reply, master):
     mem.write(unit, table, addr, vals, master)
-    log("%s write %s %d x%d = %s%s" % (who, table, addr, len(vals), fmt_values(table, vals),
-                                       mem.describe(unit, table, addr, vals)))
+    desc = mem.describe(unit, table, addr, vals)
+    log("%s write %s %d x%d = %s%s" % (who, table, addr, len(vals), fmt_values(table, vals), desc))
+    if master and wlog.f:
+        gap = mem.since_last
+        wlog("write %s %d x%d = %s%s  [%s]  %s" % (
+            table, addr, len(vals), fmt_values(table, vals), desc,
+            "first write here" if gap is None else "+%.3f s since the last write here" % gap, who))
     mem.save()
     return reply
 
@@ -966,8 +1062,9 @@ class Stream:
 
 
 class Server:
-    def __init__(self, mem, delay, devices, unknown_units="answer"):
+    def __init__(self, mem, delay, devices, unknown_units="answer", silent=None):
         self.mem, self.delay, self.devices, self.unknown_units = mem, delay, devices, unknown_units
+        self.silent = silent
         self.noted = set()
 
     def serve(self, framer, ctx, unit, pdu, raw, peer, control=False):
@@ -977,6 +1074,10 @@ class Server:
         if framer.name == "TCP" and unit in (0, 255) and len(self.devices) == 1:
             unit = next(iter(self.devices))  # Modbus TCP "this device"
         who = "%s %s unit %d" % (peer, framer.name, wire_unit)
+        if self.silent and not control and self.silent.on():
+            self.silent.dropped += 1
+            log("%s fc%02d silent: no reply" % (who, pdu[0]))
+            return None, 0
         try:
             if not broadcast and unit not in self.devices and not control:
                 if self.unknown_units == "silent":
@@ -1088,11 +1189,13 @@ def serve_pty(srv, link, framing):
     return path
 
 
-async def ticker(delay, schedules, mem, reads_file):
+async def ticker(delay, schedules, mem, reads_file, resets, silent):
     n = 0
     while True:
         delay.tick()
         schedules.tick()
+        resets.tick()
+        silent.tick()
         n += 1
         if n % 10 == 0:
             mem.save_reads(reads_file)
@@ -1109,10 +1212,15 @@ async def main():
     ap.add_argument("--delay-file", help="JSON reply delays, re-read on change (see above)")
     ap.add_argument("--schedule-file", help="JSON list of schedules, re-read on change")
     ap.add_argument("--reads-file", help="JSON of when the master last read each tag, written every second")
+    ap.add_argument("--reset-file", help="JSON list of addresses reset to 0 after no write for a while, re-read on change")
+    ap.add_argument("--silent-file", help='JSON {"until": unix time}: no replies until then, re-read on change')
+    ap.add_argument("--writes-log", help="log of only the master's writes and auto-resets (rotates like --log)")
     ap.add_argument("--no-udp", action="store_true", help="TCP endpoints: don't also listen on UDP")
     a = ap.parse_args()
     if a.log:
         log.open(a.log)
+    if a.writes_log:
+        wlog.open(a.writes_log)
 
     cfg = load_config(a.init)
     ep, framing = cfg["endpoint"], cfg.get("framing")
@@ -1123,8 +1231,10 @@ async def main():
     kept = a.state and mem.load_state()
     mem.save()
     delay = Delay(a.delay_file)
-    srv = Server(mem, delay, cfg["devices"], cfg.get("unknown_units", "answer"))
+    silent = Silent(a.silent_file)
+    srv = Server(mem, delay, cfg["devices"], cfg.get("unknown_units", "answer"), silent)
     schedules = Schedules(mem, cfg, a.schedule_file)
+    resets = AutoReset(mem, cfg, a.reset_file)
 
     log("Modbus simulator %s: units %s, %d tags, %s; refuse=%s code %02d"
         % (os.path.basename(a.init), ", ".join(map(str, sorted(cfg["devices"]))) or "none", len(cfg["tags"]),
@@ -1151,7 +1261,7 @@ async def main():
     log("control port 127.0.0.1:%d (modbus_client.py and the web UI)" % cfg["control_port"])
     if a.reads_file and os.path.exists(a.reads_file):
         os.remove(a.reads_file)
-    await ticker(delay, schedules, mem, a.reads_file)
+    await ticker(delay, schedules, mem, a.reads_file, resets, silent)
 
 
 def run():

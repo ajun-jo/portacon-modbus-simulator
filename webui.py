@@ -115,6 +115,9 @@ class Machine:
                 "running": pid is not None, "pid": pid, "poll": last_poll(self.name) if pid else None,
                 "delay": read_json(path(self.name, ".delay"), {}),
                 "schedules": (sched if isinstance(sched, list) else sched.get("schedules", [])) + c.get("schedules", []),
+                "resets": read_json(path(self.name, ".reset.json"), []),
+                "silent_until": (read_json(path(self.name, ".silent.json"), {}) or {}).get("until"),
+                "now": time.time(),
                 "file_schedules": len(c.get("schedules", []))}
 
     def state(self):
@@ -220,6 +223,31 @@ class Machine:
             os.remove(path(self.name, ".delay"))
         return new
 
+    def set_resets(self, items):
+        out = []
+        for r in items:
+            unit = int(r.get("unit") or min(self.cfg["devices"]))
+            table = table_name(r["table"])
+            if table not in ("coil", "hr"):
+                raise ValueError("auto-reset works on coils and holding registers (what a master writes)")
+            addr, after = int(r["addr"]), float(r.get("after_s") or 0)
+            if not 0 <= addr <= 65535 or after <= 0:
+                raise ValueError("auto-reset needs an address 0-65535 and a time > 0 s")
+            out.append({"unit": unit, "table": table, "addr": addr, "after_s": after})
+        if out:
+            write_json(path(self.name, ".reset.json"), out)
+        elif os.path.exists(path(self.name, ".reset.json")):
+            os.remove(path(self.name, ".reset.json"))
+        return out
+
+    def set_silent(self, seconds):
+        seconds = float(seconds or 0)
+        if seconds > 0:
+            write_json(path(self.name, ".silent.json"), {"until": time.time() + seconds})
+        elif os.path.exists(path(self.name, ".silent.json")):
+            os.remove(path(self.name, ".silent.json"))
+        return seconds
+
     def set_schedules(self, items):
         out = []
         for s in items:
@@ -320,7 +348,7 @@ def load_project(name, proj):
         if n not in new and "-" not in n:  # files from the last project loaded here (prefixed ones are kept)
             os.remove(os.path.join(HERE, "machines", n + ".init.json"))
     for n in new:
-        for ext in (".state.json", ".reads.json", ".schedule.json", ".delay"):
+        for ext in (".state.json", ".reads.json", ".schedule.json", ".delay", ".reset.json", ".silent.json"):
             if os.path.exists(path(n, ext)):
                 os.remove(path(n, ext))
     write_json(PROJECT_FILE, {"name": name, "loaded": time.strftime("%Y-%m-%d %H:%M:%S"), "files": new,
@@ -413,6 +441,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, {"ok": True})
             if action == "delay":
                 return self.send(200, {"delay": m.set_delay(body)})
+            if action == "resets":
+                return self.send(200, {"resets": m.set_resets(body.get("resets", []))})
+            if action == "silent":
+                return self.send(200, {"seconds": m.set_silent(body.get("seconds", 0))})
             if action == "schedules":
                 return self.send(200, {"schedules": m.set_schedules(body.get("schedules", []))})
             self.send(404, {"error": "not found"})
@@ -515,7 +547,10 @@ tr.changed td.val { animation: flash 1.6s ease-out; }
 .raw { color: var(--muted); font-family: var(--mono); font-size: 11.5px; }
 .section { border-top: 1px solid var(--line); padding: 12px 16px; }
 .section h3 { margin: 0 0 8px; font-size: 14px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-.controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+.controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 16px 24px; }
+.controls > div { min-width: 0; }
+.sched { width: auto; }
+.sched select, .sched input { max-width: 100%; }
 .ctl-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 6px 0; font-size: 13px; }
 .ctl-row input[type=number] { width: 90px; }
 .ctl-row input.wide { width: 150px; }
@@ -564,7 +599,8 @@ a { color: var(--accent); }
     <div class="section" id="controls"></div>
     <div class="section" id="logsec"><h3>Request log
       <label class="muted" style="font-size:13px;font-weight:400"><input type="checkbox" id="quiet" checked onchange="loadLog()"> hide connect/disconnect</label>
-      <label class="muted" style="font-size:13px;font-weight:400"><input type="checkbox" id="live" checked> live</label></h3>
+      <label class="muted" style="font-size:13px;font-weight:400"><input type="checkbox" id="live" checked> live</label>
+      <label class="muted" style="font-size:13px;font-weight:400"><input type="checkbox" id="wonly" onchange="loadLog()"> writes, resets and silence only</label></h3>
       <pre class="log" id="log"></pre></div>
   </div>
 </div>
@@ -576,8 +612,8 @@ const store = { get(k, d) { try { return localStorage.getItem(k) ?? d; } catch (
                 set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
 const PROJECT = "__project__";
 let project = null;
-let machines = [], sel = store.get("sel", PROJECT), tab = store.get("tab", "all"), unitSel = {}, filter = "";
-let detail = null, prev = {}, controlsFor = null, draft = null;
+let machines = [], sel = new URLSearchParams(location.search).get("m") || store.get("sel", PROJECT), tab = store.get("tab", "all"), unitSel = {}, filter = "";
+let detail = null, prev = {}, controlsFor = null, draft = null, controlsSilent = false;
 $("#host").textContent = location.host;
 
 function toast(msg, err) {
@@ -605,6 +641,7 @@ function delayText(d) {
   if (d.fc && Object.keys(d.fc).length) parts.push("per FC");
   return parts.join(", ");
 }
+function silentLeft(m) { return m.silent_until ? m.silent_until - m.now : 0; }
 function endpointShort(m) {
   if (m.kind === "pty") return (m.studio_port || "serial") + " · pty";
   return "tcp " + m.port;
@@ -622,7 +659,9 @@ function renderMachines() {
         <span class="muted">${esc(m.title)}</span></div>
       <div class="meta">${m.error ? `<span class="pill bad">${esc(m.error)}</span>` : `${esc(endpointShort(m))} · unit ${m.devices.map(d => d.unit).join(", ")} ${pollPill(m)}
         ${delayText(m.delay) ? `<span class="pill warn">delay ${esc(delayText(m.delay))}</span>` : ""}
-        ${m.schedules && m.schedules.length ? `<span class="pill info">${m.schedules.length} schedule${m.schedules.length > 1 ? "s" : ""}</span>` : ""}`}</div>
+        ${m.schedules && m.schedules.length ? `<span class="pill info">${m.schedules.length} schedule${m.schedules.length > 1 ? "s" : ""}</span>` : ""}
+        ${m.resets && m.resets.length ? `<span class="pill info">auto-reset</span>` : ""}
+        ${silentLeft(m) > 0 ? `<span class="pill bad">silent ${Math.ceil(silentLeft(m))}s</span>` : ""}`}</div>
     </div>`).join("")).join("");
   $("#machines").insertAdjacentHTML("afterbegin", projectCard);
 }
@@ -738,8 +777,9 @@ function renderBody(d) {
 
 function renderControls(d) {
   const m = d.machine, dl = m.delay || {};
-  if (!draft) draft = { sched: (m.schedules || []).slice(0, m.schedules.length - m.file_schedules)
-    .map(s => ({...s, values: (s.values || []).join(", ")})) };
+  if (!draft || !draft.resets) draft = Object.assign(draft || {}, { resets: (m.resets || []).map(r => ({...r})) });
+  if (!draft.sched) draft.sched = (m.schedules || []).slice(0, m.schedules.length - m.file_schedules)
+    .map(s => ({...s, values: (s.values || []).join(", ")}));
   const tagOpts = (unit, cur) => (d.devices.find(x => x.unit === Number(unit)) || d.devices[0] || {tags: []}).tags
     .filter(t => !t.pending).map(t => `<option ${t.tag === cur ? "selected" : ""}>${esc(t.tag)}</option>`).join("");
   $("#controls").innerHTML = `<div class="controls">
@@ -761,12 +801,32 @@ function renderControls(d) {
                : `<span class="mono">${esc(s.table)} ${esc(s.addr)} ${esc(s.type)}</span>`}</td>
           <td><input type="text" style="width:130px" value="${esc(s.values)}" placeholder="5, 10" oninput="draft.sched[${i}].values=this.value"></td>
           <td><input type="number" style="width:70px" min="0.1" step="0.5" value="${esc(s.every_s)}" oninput="draft.sched[${i}].every_s=this.value"></td>
-          <td><button class="small danger" onclick="draft.sched.splice(${i},1);renderControls(detail)">Remove</button></td></tr>`).join("")
+          <td><button class="small danger" title="Remove" onclick="draft.sched.splice(${i},1);renderControls(detail)">✕</button></td></tr>`).join("")
           || `<tr><td colspan="5" class="hint">None. ${m.file_schedules ? m.file_schedules + " more in the machine file." : ""}</td></tr>`}
       </tbody></table>
       <div class="ctl-row"><button class="small" onclick="addSched()">Add</button>
         <button class="primary" onclick="saveSched()">Save schedules</button>
         ${m.file_schedules ? `<span class="hint">+ ${m.file_schedules} from the machine file</span>` : ""}</div>
+    </div>
+    <div>
+      <h3>Auto-reset <span class="hint" style="font-weight:400">back to 0 when ptcsw hasn't written the address for a while</span></h3>
+      <table class="sched"><thead><tr><th>Slave</th><th>Table</th><th>Address</th><th>After (s)</th><th></th></tr></thead><tbody>
+        ${draft.resets.map((r, i) => `<tr>
+          <td><select onchange="draft.resets[${i}].unit=Number(this.value)">${d.devices.map(x => `<option value="${x.unit}" ${x.unit === Number(r.unit) ? "selected" : ""}>${x.unit}</option>`).join("")}</select></td>
+          <td><select onchange="draft.resets[${i}].table=this.value">${["coil", "hr"].map(t => `<option ${t === r.table ? "selected" : ""}>${t}</option>`).join("")}</select></td>
+          <td><input type="number" style="width:76px" min="0" max="65535" value="${esc(r.addr)}" oninput="draft.resets[${i}].addr=this.value"></td>
+          <td><input type="number" style="width:60px" min="1" step="1" value="${esc(r.after_s)}" oninput="draft.resets[${i}].after_s=this.value"></td>
+          <td><button class="small danger" title="Remove" onclick="draft.resets.splice(${i},1);renderControls(detail)">✕</button></td></tr>`).join("")
+          || '<tr><td colspan="5" class="hint">None.</td></tr>'}
+      </tbody></table>
+      <div class="ctl-row"><button class="small" onclick="draft.resets.push({unit: unitSel[sel] || detail.devices[0]?.unit || 1, table: 'hr', addr: 0, after_s: 30});renderControls(detail)">Add</button>
+        <button class="primary" onclick="saveResets()">Save auto-reset</button></div>
+    </div>
+    <div>
+      <h3>Device down <span class="hint" style="font-weight:400">stop answering without a restart, so the pty stays the same</span></h3>
+      <div class="ctl-row">${silentLeft(m) > 0
+        ? `<span class="pill bad">silent for ${Math.ceil(silentLeft(m))} more s</span><button class="primary" onclick="setSilent(0)">Answer again now</button>`
+        : `No replies for <input type="number" id="silent-s" min="1" step="10" value="60"> s <button class="danger" onclick="setSilent(Number($('#silent-s').value))">Go silent</button>`}</div>
     </div></div>`;
 }
 function addSched() {
@@ -777,6 +837,17 @@ function addSched() {
 }
 async function saveSched() {
   try { const r = await api(`/api/m/${sel}/schedules`, {schedules: draft.sched}); toast(r.schedules.length ? r.schedules.length + " schedule(s) saved" : "Schedules cleared"); draft = null; }
+  catch (e) { toast(e.message, true); }
+  await refresh(true);
+}
+async function saveResets() {
+  try { const r = await api(`/api/m/${sel}/resets`, {resets: draft.resets}); toast(r.resets.length ? r.resets.length + " auto-reset rule(s) saved" : "Auto-reset off"); draft = null; }
+  catch (e) { toast(e.message, true); }
+  await refresh(true);
+}
+async function setSilent(sec) {
+  if (sec > 0 && !confirm(`Stop ${sel} answering for ${sec} s? ptcsw will see the device as down.`)) return;
+  try { await api(`/api/m/${sel}/silent`, {seconds: sec}); toast(sec > 0 ? `${sel} silent for ${sec} s` : `${sel} answering again`); }
   catch (e) { toast(e.message, true); }
   await refresh(true);
 }
@@ -799,8 +870,10 @@ async function loadLog() {
   const el = $("#log");
   const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
   const quiet = $("#quiet").checked;
-  lines = lines.filter(l => !quiet || !/ (connect|disconnect|speaks Modbus \w+)$/.test(l)).slice(-250);
-  el.innerHTML = lines.map(l => `<span class="${/ write /.test(l) ? "w" : / exception |bad |garbled|malformed|error/.test(l) ? "e" : /delay|schedule|ignored/.test(l) ? "d" : / (connect|disconnect)$/.test(l) ? "c" : ""}">${esc(l)}</span>`).join("\n") || "(empty)";
+  const wonly = $("#wonly").checked;
+  lines = lines.filter(l => (!quiet || !/ (connect|disconnect|speaks Modbus \w+)$/.test(l)) &&
+    (!wonly || (/ write |RESET|SILENT|silent/.test(l) && !/^\S+ ctl /.test(l)))).slice(-250);
+  el.innerHTML = lines.map(l => `<span class="${/RESET|SILENT|silent/.test(l) ? "e" : / write /.test(l) ? "w" : / exception |bad |garbled|malformed|error/.test(l) ? "e" : /delay|schedule|ignored/.test(l) ? "d" : / (connect|disconnect)$/.test(l) ? "c" : ""}">${esc(l)}</span>`).join("\n") || "(empty)";
   if (atBottom || !el._init) { el.scrollTop = el.scrollHeight; el._init = true; }
 }
 
@@ -816,7 +889,10 @@ async function refresh(withControls) {
     detail = await api(`/api/m/${sel}`);
     renderHead(detail.machine);
     renderBody(detail);
-    if (withControls || controlsFor !== sel) { controlsFor = sel; draft = null; renderControls(detail); }
+    const silentNow = silentLeft(detail.machine) > 0;
+    if (withControls || controlsFor !== sel || silentNow !== controlsSilent) {
+      controlsFor = sel; controlsSilent = silentNow; if (withControls || controlsFor !== sel) draft = null; renderControls(detail);
+    }
     if ($("#live").checked) loadLog();
   } catch (e) { toast("Can't reach the UI server: " + e.message, true); }
 }

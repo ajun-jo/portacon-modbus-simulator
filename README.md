@@ -102,6 +102,15 @@ There's no login: anyone who can reach port 8080 can change simulator values (no
   on TCP they queue.
 - **Schedules** (`<name>.schedule.json`, the file's `"schedules"`, or the UI):
   `[{"unit": 1, "tag": "dp81", "values": [5, 10], "every_s": 5}]`, or `"table"`/`"addr"`/`"type"` instead of a tag.
+- **Auto-reset** (`<name>.reset.json`, or the UI): `[{"unit": 1, "table": "coil", "addr": 100, "after_s": 30}]` puts an
+  address back to 0 when the master hasn't written it for that long, like a receiver that drops a command unless it is
+  repeated. Only the master's writes restart the timer. Logged as `RESET … (was 1; no write for 30.012 s since …)`.
+- **Device down** (`./run.sh silent com2 60`, `./remote.sh <host> silent com2 60`, or the UI's "Go silent"): no
+  replies for that many seconds, then it answers again. The process and its pty stay as they are, so ptcsw sees a
+  dead device, not a new port. `silent com2 0` ends it early. Unanswered requests are logged (`silent: no reply`).
+- **Write log** (`<name>.writes.log`): only the master's writes, with ms timestamps, address, value and the time since
+  the last write to the same address (`+60.004 s since the last write here`), and every RESET. For checking write
+  periods; the UI's log has a "writes, resets and silence only" filter too.
 - **Persistence:** values and write counts are saved to `<name>.state.json` after every write and loaded on start.
   `./run.sh reset <name>` deletes it and restarts with the starting values.
 - **Logs:** `<name>.log`, rotated to `<name>.log.1` at 20 MB.

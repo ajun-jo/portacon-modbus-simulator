@@ -17,3 +17,7 @@ autostart.list.tmp
 # made from a Studio project (web UI or studio_to_init.py); each PortaCON keeps its own
 machines/com*.init.json
 machines/tcp*.init.json
+*.writes.log
+*.writes.log.1
+*.reset.json
+*.silent.json

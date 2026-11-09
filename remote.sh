@@ -9,6 +9,7 @@
 #   ./remote.sh <host> show wind1 | get wind1 투입수 | set wind1 투입수=5000 "단선 1-3=1"
 #   ./remote.sh <host> read hr 22400 --sim wind1     (and write: raw access, as in modbus_client.py)
 #   ./remote.sh <host> log wind1                     follow the request log (Ctrl+C); outside a terminal, last 40 lines
+#   ./remote.sh <host> silent com2 60                no replies for 60 s (device down) without a restart; 0 ends it
 #   ./remote.sh <host> check com1                    self-test as a master (writes test values; reset afterwards)
 #   ./remote.sh <host> deploy                        only copy the files
 # <host> is user@ip, or a name from remote.hosts (one "name user@ip" per line, e.g. "office portacon@192.168.10.97").
@@ -20,7 +21,7 @@ cd "$(dirname "$0")"
 SSH=${REMOTE_SSH:-ssh}
 DIR=modbus-plc-simulator  # relative to the remote home directory
 
-usage() { sed -n '2,18p' "$0"; exit 1; }
+usage() { sed -n '2,19p' "$0"; exit 1; }
 [ $# -ge 2 ] || usage
 host=$1; cmd=$2; shift 2
 if [ -f remote.hosts ]; then
@@ -83,5 +84,6 @@ case $cmd in
       $SSH "$host" "tail -n 40 $DIR/$list.log"        # elsewhere (e.g. ! in Claude Code): last lines, then exit
     fi ;;
   check) remote "python3 check_sim.py$(q "$@")" ;;
+  silent) remote "./run.sh silent$(q "$@")" ;;
   *) usage ;;
 esac
