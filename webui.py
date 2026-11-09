@@ -110,7 +110,8 @@ class Machine:
                 "link": ep.get("path"), "port": ep.get("port"), "framing": c.get("framing"),
                 "studio_port": c.get("studio_port"), "application_json": c.get("application_json"),
                 "control_port": c["control_port"], "real_plc": c.get("real_plc"),
-                "devices": [{"unit": u, "name": d["name"]} for u, d in sorted(c["devices"].items())],
+                "devices": [{"unit": u, "name": d["name"], "protocol": d.get("protocol"), "tags": len(d["tags"])}
+                            for u, d in sorted(c["devices"].items())],
                 "running": pid is not None, "pid": pid, "poll": last_poll(self.name) if pid else None,
                 "delay": read_json(path(self.name, ".delay"), {}),
                 "schedules": (sched if isinstance(sched, list) else sched.get("schedules", [])) + c.get("schedules", []),
@@ -529,7 +530,18 @@ a { color: var(--accent); }
 .steps { margin: 0; padding: 12px 16px 4px 34px; font-size: 13.5px; }
 .steps li { margin: 0 0 6px; }
 .expected { font-weight: 650; font-variant-numeric: tabular-nums; }
-.port-row td { background: var(--bg); font-weight: 600; font-size: 13px; }
+.portcard { border: 1px solid var(--line); border-radius: 10px; margin: 0 16px 14px; overflow: hidden; }
+.porthead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; background: var(--bg);
+  border-bottom: 1px solid var(--line); }
+.portname { font-size: 17px; font-weight: 700; letter-spacing: .01em; }
+.devhead { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 9px 14px 7px; border-top: 1px solid var(--line); }
+.portcard .devhead:first-of-type { border-top: 0; }
+.devname { font-weight: 650; }
+.devhead::before { content: ""; width: 3px; align-self: stretch; background: var(--accent); border-radius: 2px; }
+.dptable td:first-child, .dptable th:first-child { padding-left: 26px; }
+.dptable th { background: transparent; }
+.dptable { table-layout: fixed; min-width: 860px; }
+.dptable td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg);
   padding: 8px 14px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 90vw; z-index: 10; }
 #toast.show { opacity: 1; }
@@ -832,19 +844,7 @@ function renderProject(p) {
       <li><b>Open IoTLink → data analysis.</b> Each DP should show the value in <b>Expected in IoTLink</b>. A value of 81.11 means dp81 on COM1, slave 1, so a mixed-up address or port shows up as the wrong number.</li>
     </ol>`;
   if (!p.ports.length) { $("#body").innerHTML = '<div class="empty">Load the Studio project JSON to start.</div>'; return; }
-  const ports = p.ports.map(x => x.error ? `<tr><td>${esc(x.name)}</td><td colspan="3"><span class="pill bad">${esc(x.error)}</span></td></tr>` : `<tr>
-      <td><b>${esc(x.studio_port || x.name)}</b> <span class="muted">${esc(x.name)}</span></td>
-      <td class="mono">${esc(x.kind === "pty" ? x.application_json : "device IP / port")}</td>
-      <td>${x.kind === "pty" ? `<span class="mono">${esc(x.link)}</span> <button class="small" onclick="copy('${esc(x.link)}')">Copy</button>`
-                              : `<span class="mono">127.0.0.1 : ${x.port}</span>`}</td>
-      <td>${pollPill(x)}</td></tr>`).join("");
-  let last = null;
-  const rows = p.dps.map(r => {
-    const head = r.port + "/" + r.unit;
-    const sep = head !== last ? `<tr class="port-row"><td colspan="9">${esc(r.port)} · slave ${r.unit}${r.device ? " · " + esc(r.device) : ""}
-      <a href="#" onclick="pick('${r.sim}');return false" style="font-weight:400;margin-left:8px">change values, delays…</a></td></tr>` : "";
-    last = head;
-    return sep + `<tr>
+  const dpRow = r => `<tr>
       <td><b>${esc(r.dp)}</b></td><td class="mono">${esc(r.table)} ${r.addr}</td>
       <td class="mono">${esc(r.type)}${r.word_order && r.type !== "BOOL" && !/16/.test(r.type) ? " · " + esc(r.word_order) : ""}</td>
       <td class="mono">${esc(fmtNum(r.value))}</td><td class="mono">${esc(r.expression || "—")}</td>
@@ -852,14 +852,30 @@ function renderProject(p) {
       <td class="muted">${r.report_ms ? r.report_ms / 1000 + " s" : ""}</td>
       <td>${readCell(r)}</td>
       <td class="num">${r.writes ? `<span class="pill ${r.writes > 1 ? "warn" : "info"}" title="writes from ptcsw">${r.writes} w</span>` : ""}</td></tr>`;
+  const proto = v => ({modbusRtu: "Modbus RTU", modbusAscii: "Modbus ASCII", modbusTcp: "Modbus TCP"}[v] || v || "");
+  const cards = p.ports.map(x => {
+    if (x.error) return `<div class="portcard"><div class="porthead"><span class="portname">${esc(x.name)}</span><span class="pill bad">${esc(x.error)}</span></div></div>`;
+    const target = x.kind === "pty"
+      ? `<span class="hint">${esc(x.application_json)} =</span> <span class="mono">${esc(x.link)}</span> <button class="small" onclick="copy('${esc(x.link)}')">Copy</button>`
+      : `<span class="hint">device IP / port =</span> <span class="mono">127.0.0.1 : ${x.port}</span>`;
+    const devs = x.devices.map(d => {
+      const rows = p.dps.filter(r => r.sim === x.name && r.unit === d.unit);
+      return `<div class="devhead"><span class="devname">${esc(d.name || "device")}</span>
+          <span class="pill info">slave ${d.unit}</span><span class="muted" style="font-size:12.5px">${esc(proto(d.protocol))} · ${rows.length} DP${rows.length === 1 ? "" : "s"}</span>
+          <span class="spacer"></span><a href="#" onclick="unitSel['${x.name}']=${d.unit};pick('${x.name}');return false" style="font-size:12.5px">change values, delays…</a></div>
+        <div class="tablewrap"><table class="dptable">
+          <colgroup><col style="width:11%"><col style="width:10%"><col style="width:15%"><col style="width:11%"><col style="width:10%"><col style="width:14%"><col style="width:10%"><col style="width:13%"><col style="width:6%"></colgroup>
+          <thead><tr><th>DP</th><th>Address</th><th>Type</th><th>Served (raw)</th><th>Expression</th><th>Expected in IoTLink</th><th>Reported</th><th>ptcsw reading it</th><th></th></tr></thead>
+          <tbody>${rows.map(dpRow).join("") || '<tr><td colspan="9" class="hint">No enabled datapoints.</td></tr>'}</tbody></table></div>`;
+    }).join("");
+    return `<div class="portcard">
+      <div class="porthead"><span class="dot ${x.running ? "on" : ""}"></span><span class="portname">${esc(x.studio_port || x.name)}</span>
+        ${target}<span class="spacer"></span>${pollPill(x)}</div>
+      ${devs}</div>`;
   }).join("");
   $("#body").innerHTML = `
-    <div class="section"><h3>Ports</h3><div class="tablewrap"><table>
-      <thead><tr><th>Port</th><th>application.json key</th><th>Set it to</th><th>ptcsw</th></tr></thead><tbody>${ports}</tbody></table></div></div>
-    <div class="section"><h3>Datapoints <span class="hint" style="font-weight:400">${p.dps.length} served; the table updates every 2 s</span></h3>
-      <div class="tablewrap"><table>
-      <thead><tr><th>DP</th><th>Address</th><th>Type</th><th>Served (raw)</th><th>Expression</th><th>Expected in IoTLink</th><th>Reported every</th><th>ptcsw reading it</th><th></th></tr></thead>
-      <tbody>${rows || '<tr><td colspan="9" class="empty">No datapoints.</td></tr>'}</tbody></table></div></div>
+    <div class="section" style="border-top:0;padding-bottom:4px"><h3>Ports, devices and datapoints <span class="hint" style="font-weight:400">${p.dps.length} DPs served; updates every 2 s</span></h3></div>
+    ${cards}
     ${p.notes.length ? `<div class="section"><h3>Notes from loading</h3><ul style="margin:0;padding-left:20px;font-size:13px">${p.notes.map(n => `<li>${esc(n)}</li>`).join("")}</ul></div>` : ""}`;
 }
 async function loadProject(file) {
