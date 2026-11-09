@@ -1,24 +1,25 @@
 #!/bin/bash
 # Run the simulator on a portacon (or any Linux box with Python 3) over SSH, from anyone's machine.
-#   ./remote.sh <host> start all | start wind1 sp1   copy the simulator there, then start (restart) machines
-#   ./remote.sh <host> stop all  | stop wind1
+#   ./remote.sh <host> start all | start com1 sp1    copy the simulator there, then start (restart) them; values are kept
+#   ./remote.sh <host> stop all  | stop com1
+#   ./remote.sh <host> reset all | reset com1         back to the starting values and zero write counts
 #   ./remote.sh <host> ui                            copy the simulator there and start the web UI: http://<ip>:8080
 #   ./remote.sh <host> status
 #   ./remote.sh <host> show wind1 | get wind1 투입수 | set wind1 투입수=5000 "단선 1-3=1"
 #   ./remote.sh <host> read hr 22400 --sim wind1     (and write: raw access, as in modbus_client.py)
 #   ./remote.sh <host> log wind1                     follow the request log (Ctrl+C); outside a terminal, last 40 lines
-#   ./remote.sh <host> check sp1                     self-test (writes test values; start it again afterwards)
+#   ./remote.sh <host> check com1                    self-test as a master (writes test values; reset afterwards)
 #   ./remote.sh <host> deploy                        only copy the files
 # <host> is user@ip, or a name from remote.hosts (one "name user@ip" per line, e.g. "office portacon@192.168.10.97").
 # Hostnames aren't unique (every reComputer is "reComputer-R100x"), so use the IP.
-# Files go to ~/modbus-plc-simulator on that box, and ptcsw there polls 127.0.0.1:5020-5026.
+# Files go to ~/modbus-plc-simulator on that box. ptcsw there opens its ttyCOM* ptys or polls 127.0.0.1:5020-5026.
 # One-time setup per person: ssh-copy-id user@ip   (so SSH logs in without a password)
 set -e
 cd "$(dirname "$0")"
 SSH=${REMOTE_SSH:-ssh}
 DIR=modbus-plc-simulator  # relative to the remote home directory
 
-usage() { sed -n '2,16p' "$0"; exit 1; }
+usage() { sed -n '2,17p' "$0"; exit 1; }
 [ $# -ge 2 ] || usage
 host=$1; cmd=$2; shift 2
 if [ -f remote.hosts ]; then
@@ -43,7 +44,7 @@ machines() {
 
 deploy() {
   COPYFILE_DISABLE=1 tar --no-xattrs --no-mac-metadata -czf - \
-    modbus_plc_sim.py modbus_client.py webui.py run.sh check_sim.sh machines/*.init.json \
+    modbus_plc_sim.py modbus_client.py webui.py run.sh check_sim.py machines/*.init.json \
     | $SSH "$host" "mkdir -p $DIR && tar -xzf - -C $DIR"
   echo "copied the simulator to $host:~/$DIR"
 }
@@ -53,16 +54,16 @@ case $cmd in
   start)
     list=$(machines "$@")
     deploy
-    remote "for m in $list; do ./run.sh \$m | tail -n 1; done" ;;
-  stop)
+    remote "./run.sh $list" ;;
+  stop|reset)
     list=$(machines "$@")
-    remote "for m in $list; do ./run.sh stop \$m; done" ;;
+    remote "./run.sh $cmd $list" ;;
   ui)
     deploy
     remote "./run.sh ui$(q "$@")"
     echo "open http://${host#*@}:8080 in a browser (or the --port you gave)" ;;
   status) remote "./run.sh status" ;;
-  show|get|set|read|write) remote "python3 modbus_client.py$(q "$cmd" "$@")" ;;
+  show|get|set|read|write|reset-counts) remote "python3 modbus_client.py$(q "$cmd" "$@")" ;;
   log)
     list=$(machines "$@")
     if [ -t 0 ] && [ -t 1 ]; then
@@ -70,6 +71,6 @@ case $cmd in
     else
       $SSH "$host" "tail -n 40 $DIR/$list.log"        # elsewhere (e.g. ! in Claude Code): last lines, then exit
     fi ;;
-  check) remote "./check_sim.sh$(q "$@")" ;;
+  check) remote "python3 check_sim.py$(q "$@")" ;;
   *) usage ;;
 esac

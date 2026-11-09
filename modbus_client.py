@@ -1,26 +1,29 @@
 #!/usr/bin/env python3
 """Client for the simulator: read and change values by tag name or raw address while your server polls.
-It talks Modbus TCP to the simulator's port, which also accepts RTU and ASCII framing, so it works whichever
-framing your server uses.
+It talks Modbus TCP to the simulator's control port (127.0.0.1 only), so it is never a second master on a
+serial port, and its writes aren't counted as the master's.
 
-By tag name (host, port, unit and word/byte order come from the init file; "sp1" means machines/sp1.init.json):
-  modbus_client.py show sp1                                   every tag with its current value
+By tag name (port, unit and word/byte order come from the file; "sp1" means machines/sp1.init.json):
+  modbus_client.py show sp1                                   every tag with its value and the master's write count
   modbus_client.py get sp1 투입수 "LOT No."
   modbus_client.py set sp1 투입수=5000 가동중=0 "LOT No.=LOT0002"
+  modbus_client.py set com1 dp81=12.5 --unit 1                --unit picks the device when a port has several
+  modbus_client.py reset-counts com1                          zero the write counts
 
 By raw address (tables: coil, di, ir, hr; addresses are 0-based, so manual "40001" is hr 0):
   modbus_client.py read hr 1104 2 --sim sp1                   raw registers in hex
   modbus_client.py read hr 1104 --type INT32 --sim sp1
-  modbus_client.py write hr 1104 --type INT32 123456 --port 5020
-  modbus_client.py write hr 20 0x1234 0x5678 --port 5020      raw words
-  modbus_client.py write coil 0 1011 --port 5020              bits, lowest address first
-  modbus_client.py write ir 10 --type FLOAT32 3.5 --port 5020 di/ir are set through the simulator's FC 65
+  modbus_client.py write hr 1104 --type INT32 123456 --sim sp1
+  modbus_client.py write hr 20 0x1234 0x5678 --sim sp1        raw words
+  modbus_client.py write coil 0 1011 --sim sp1                bits, lowest address first
+  modbus_client.py write ir 90 --type FLOAT32 3.5 --sim com1  di/ir are set through the control port's FC 65
   modbus_client.py read hr 5533 --bit 6 --sim wind1           one bit of a register (bit 0 = lowest)
   modbus_client.py write hr 5533 1 --bit 6 --sim wind1        sets only that bit (read-modify-write)
 
 Types: BOOL BIT INT16 UINT16 INT32 UINT32 FLOAT32 STRING WORDS. BIT is one bit inside a register ("bit": 0-15).
 An exception reply prints e.g. "exception 02 (illegal data address)" and exits with status 1.
-A second client is harmless: Modbus TCP is request/response per connection, so your server's polling is unaffected.
+--host/--port talk to another address instead, e.g. --host 192.168.10.97 --port 5022 reaches a TCP endpoint
+from another machine (as a master: those writes are counted).
 """
 import argparse
 import os
@@ -31,8 +34,9 @@ import unicodedata
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from modbus_plc_sim import (  # noqa: E402
-    BIT_TABLES, DEFAULT_PORT, EXCEPTION_NAMES, FC_BACKDOOR, READ_FC, TABLE_CODES,
-    decode_value, encode_value, load_config, pack_bits, set_bit, table_name, unpack_bits, word_count,
+    BIT_TABLES, EXCEPTION_NAMES, FC_BACKDOOR, FC_RESET_COUNTS, READ_FC, TABLE_CODES,
+    decode_value, encode_value, find_tag as _find_tag, load_config, pack_bits, set_bit, table_name, unpack_bits,
+    word_count,
 )
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -76,13 +80,17 @@ class Client:
             raise ModbusException(body[1])
         return body
 
-    def read(self, table, addr, n):
+    def read(self, table, addr, n, unit=None):
+        if unit is not None:
+            self.unit = unit
         body = self.call(struct.pack(">BHH", READ_FC[table], addr, n))
         data = body[2:]
         return unpack_bits(data, n) if table in BIT_TABLES else list(struct.unpack(">%dH" % n, data[:2 * n]))
 
-    def write(self, table, addr, vals):
+    def write(self, table, addr, vals, unit=None):
         """Uses FC 05/15 for coils, FC 06/16 for holding registers and the FC 65 back door for di/ir."""
+        if unit is not None:
+            self.unit = unit
         bit = table in BIT_TABLES
         data = pack_bits(vals) if bit else struct.pack(">%dH" % len(vals), *vals)
         if table == "coil" and len(vals) == 1:
@@ -107,17 +115,37 @@ def sim_path(name):
     raise SystemExit("no machine %r. Machines: %s" % (name, ", ".join(names)))
 
 
+def default_unit(a, cfg):
+    if a.unit is not None:
+        return a.unit
+    return min(cfg["devices"]) if cfg.get("devices") else 1
+
+
 def connect(a, cfg):
-    return Client(a.host or "127.0.0.1", a.port or cfg.get("port") or DEFAULT_PORT,
-                  a.unit if a.unit is not None else cfg.get("unit_id", 1), a.timeout)
+    local = a.host in (None, "127.0.0.1", "localhost")
+    port = a.port or (cfg.get("control_port") if local else cfg.get("port"))
+    if not port:
+        raise SystemExit("say --port: this simulator's control port only listens on 127.0.0.1")
+    return Client(a.host or "127.0.0.1", port, default_unit(a, cfg), a.timeout)
 
 
-def find_tag(cfg, name):
-    for exact in (True, False):
-        for t in cfg["tags"]:
-            if (t["tag"] == name) if exact else (t["tag"].replace(" ", "").lower() == name.replace(" ", "").lower()):
-                return t
-    raise SystemExit("no tag %r. Tags: %s" % (name, ", ".join(t["tag"] for t in cfg["tags"])))
+def find_tag(cfg, name, unit=None):
+    try:
+        return _find_tag(cfg, name, unit)
+    except ValueError as ex:
+        tags = [t["tag"] for t in cfg["tags"] if unit is None or t["unit"] == unit]
+        raise SystemExit("%s. Tags: %s" % (ex, ", ".join(tags)))
+
+
+def write_counts(sim):
+    """{unit: {tag: count}} from the simulator's state file, if it's on this machine."""
+    p = os.path.join(HERE, os.path.basename(sim_path(sim))[:-len(".init.json")] + ".state.json")
+    try:
+        import json
+        with open(p, encoding="utf-8") as f:
+            return {int(u): c for u, c in json.load(f).get("writes", {}).items()}
+    except (OSError, ValueError, AttributeError):
+        return {}
 
 
 def text_width(s):
@@ -142,22 +170,27 @@ def fmt_addr(t):
 
 def write_tag(cl, t, words):
     if t["type"] == "BIT":  # only this bit; the register's other bits belong to other tags
-        words = [set_bit(cl.read(t["table"], t["addr"], 1)[0], t["bit"], words[0])]
-    cl.write(t["table"], t["addr"], words)
+        words = [set_bit(cl.read(t["table"], t["addr"], 1, t["unit"])[0], t["bit"], words[0])]
+    cl.write(t["table"], t["addr"], words, t["unit"])
 
 
-def show(cl, tags):
+def show(cl, tags, counts=None):
     rows, failed = [], False
+    many = len({t["unit"] for t in tags}) > 1
     for t in tags:
         if t["pending"]:
             v = "<no Modbus address yet: set \"addr\">"
         else:
             try:
-                v = fmt(decode_value(t["type"], cl.read(t["table"], t["addr"], t["words"]), t))
+                v = fmt(decode_value(t["type"], cl.read(t["table"], t["addr"], t["words"], t["unit"]), t))
             except ModbusException as ex:
                 v, failed = "<%s>" % ex, True
-        rows.append((t["tag"], fmt_addr(t), t.get("plc_addr", ""), t["type"], v))
-    print_table(("tag", "address", "plc", "type", "value"), rows)
+        row = ((str(t["unit"]),) if many else ()) + (t["tag"], fmt_addr(t), t.get("plc_addr", ""), t["type"], v)
+        if counts is not None:
+            row += (str(counts.get(t["unit"], {}).get(t["tag"], 0)),)
+        rows.append(row)
+    header = (("unit",) if many else ()) + ("tag", "address", "plc", "type", "value")
+    print_table(header + (("writes",) if counts is not None else ()), rows)
     return 1 if failed else 0
 
 
@@ -165,12 +198,27 @@ def show(cl, tags):
 
 def cmd_show(a):
     cfg = load_config(sim_path(a.sim))
-    return show(connect(a, cfg), cfg["tags"])
+    tags = [t for t in cfg["tags"] if a.unit is None or t["unit"] == a.unit]
+    counts = write_counts(a.sim)
+    rc = show(connect(a, cfg), tags, counts)
+    other = {u: c for u, c in counts.items() if c}
+    extra = ["unit %d %s: %d" % (u, k, n) for u, c in sorted(other.items()) for k, n in c.items()
+             if not any(t["unit"] == u and t["tag"] == k for t in cfg["tags"])]
+    if extra:
+        print("writes to untagged addresses: " + ", ".join(extra))
+    return rc
 
 
 def cmd_get(a):
     cfg = load_config(sim_path(a.sim))
-    return show(connect(a, cfg), [find_tag(cfg, n) for n in a.tags])
+    return show(connect(a, cfg), [find_tag(cfg, n, a.unit) for n in a.tags], write_counts(a.sim))
+
+
+def cmd_reset_counts(a):
+    cfg = load_config(sim_path(a.sim))
+    connect(a, cfg).call(bytes([FC_RESET_COUNTS]))
+    print("write counts reset")
+    return 0
 
 
 def cmd_set(a):
@@ -180,7 +228,7 @@ def cmd_set(a):
         if "=" not in item:
             raise SystemExit("expected tag=value, got %r" % item)
         name, val = item.split("=", 1)
-        t = find_tag(cfg, name.strip())
+        t = find_tag(cfg, name.strip(), a.unit)
         if t["pending"]:
             raise SystemExit("%s has no Modbus address yet; set its \"addr\" in the machine file" % t["tag"])
         try:
@@ -194,8 +242,12 @@ def cmd_set(a):
 
 
 def raw_opts(a):
-    cfg = load_config(sim_path(a.sim)) if a.sim else {"tags": []}
+    cfg = load_config(sim_path(a.sim)) if a.sim else {"tags": [], "devices": {}}
     opts = dict(cfg.get("defaults", {}))
+    unit = default_unit(a, cfg)
+    for t in cfg["tags"]:  # a tagged address: use that tag's layout (e.g. a Studio DP's word order)
+        if t["unit"] == unit and not t["pending"] and t["table"] == table_name(a.table) and t["addr"] == a.addr:
+            opts.update({k: t[k] for k in ("word_order", "byte_order", "encoding") if k in t})
     for k in ("word_order", "byte_order", "encoding", "words"):
         if getattr(a, k, None):
             opts[k] = getattr(a, k)
@@ -247,8 +299,8 @@ def cmd_write(a):
 def main():
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--host", help="default 127.0.0.1")
-    common.add_argument("--port", type=int, help="default: the init file's port, else %d" % DEFAULT_PORT)
-    common.add_argument("--unit", type=int, help="unit id; default: the init file's unit_id, else 1")
+    common.add_argument("--port", type=int, help="default: the file's control port (its TCP port with --host)")
+    common.add_argument("--unit", type=int, help="unit (slave) id; default: the file's first device")
     common.add_argument("--timeout", type=float, default=3)
 
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -264,9 +316,12 @@ def main():
     p.add_argument("sim")
     p.add_argument("assignments", nargs="+", metavar="tag=value")
     p.set_defaults(fn=cmd_set)
+    p = sub.add_parser("reset-counts", parents=[common], help="zero the master's write counts")
+    p.add_argument("sim")
+    p.set_defaults(fn=cmd_reset_counts)
 
     raw = argparse.ArgumentParser(add_help=False, parents=[common])
-    raw.add_argument("--sim", help="take host, port, unit and word/byte order from this init file")
+    raw.add_argument("--sim", help="take the port, unit and word/byte order from this simulator file")
     raw.add_argument("--type", default="WORDS", help="BOOL INT16 UINT16 INT32 UINT32 FLOAT32 STRING WORDS")
     raw.add_argument("--word-order", choices=["big", "little"], help="32-bit types; big = high word first")
     raw.add_argument("--byte-order", choices=["big", "little"], help="STRING; big = first character in high byte")

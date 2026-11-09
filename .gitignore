@@ -5,3 +5,7 @@
 *.delay
 __pycache__/
 remote.hosts
+*.out
+*.log.1
+*.schedule.json
+tty*

@@ -1,0 +1,1297 @@
+{
+  "logicSheetList": [],
+  "variableList": [
+    {
+      "id": "status_ccff5f3c-23a8-480f-9c6f-d85313af1fdd",
+      "name": "port 1 device_STATUS",
+      "dataType": "BOOL",
+      "system": true,
+      "sourceSchemaId": "ccff5f3c-23a8-480f-9c6f-d85313af1fdd"
+    },
+    {
+      "id": "status_5c334a4d-8d44-436f-ba04-3c4ed181c229",
+      "name": "port 2 device_STATUS",
+      "dataType": "BOOL",
+      "system": true,
+      "sourceSchemaId": "5c334a4d-8d44-436f-ba04-3c4ed181c229"
+    },
+    {
+      "id": "status_012fec66-1059-4d9c-a743-49417402f743",
+      "name": "port 3 device_STATUS",
+      "dataType": "BOOL",
+      "system": true,
+      "sourceSchemaId": "012fec66-1059-4d9c-a743-49417402f743"
+    }
+  ],
+  "interfaces": {
+    "rs232": {
+      "defaultSettings": {
+        "baudRate": 9600,
+        "dataBit": "8",
+        "parityBit": "None",
+        "stopBit": "1"
+      },
+      "devices": [
+        {
+          "id": "ccff5f3c-23a8-480f-9c6f-d85313af1fdd",
+          "name": "port 1 device",
+          "deviceModelId": "6ce3f210-0d34-4193-ba0f-e83354b939fe",
+          "protocolType": "modbusRtu",
+          "interfaceType": "rs232",
+          "slaveId": 1,
+          "datapointConfigs": {
+            "dp81": {
+              "enabled": true,
+              "functionCode": "ReadInputRegister",
+              "address": "90",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": 10000,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp82": {
+              "enabled": true,
+              "functionCode": "ReadInputRegister",
+              "address": "70",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": 10000,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp125": {
+              "enabled": true,
+              "functionCode": "ReadInputRegister",
+              "address": "106",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": 10000,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp126": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp129": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp142": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp143": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp145": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp146": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp148": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp149": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp150": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp151": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp152": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp153": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp154": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp155": {
+              "enabled": false,
+              "functionCode": "ReadDiscreteInput",
+              "address": "70",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": 1000,
+              "events": [],
+              "registerType": "discreteInput",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp156": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp157": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp158": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp301": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            }
+          },
+          "stateConfigs": {},
+          "responseTimeoutMs": null,
+          "maxReadLength": null
+        }
+      ]
+    },
+    "rs485": {
+      "defaultSettings": {
+        "baudRate": 9600,
+        "dataBit": "8",
+        "parityBit": "None",
+        "stopBit": "1"
+      },
+      "devices": [
+        {
+          "id": "5c334a4d-8d44-436f-ba04-3c4ed181c229",
+          "name": "port 2 device",
+          "deviceModelId": "6ce3f210-0d34-4193-ba0f-e83354b939fe",
+          "protocolType": "modbusRtu",
+          "interfaceType": "rs485",
+          "slaveId": 1,
+          "datapointConfigs": {
+            "dp81": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp82": {
+              "enabled": true,
+              "functionCode": "ReadInputRegister",
+              "address": "101",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": 10000,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp125": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp126": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp129": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp142": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp143": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp145": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp146": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp148": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp149": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp150": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp151": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp152": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp153": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp154": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp155": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp156": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp157": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp158": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp301": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            }
+          },
+          "stateConfigs": {},
+          "responseTimeoutMs": null,
+          "maxReadLength": null
+        }
+      ]
+    },
+    "com3": {
+      "defaultSettings": {
+        "baudRate": 9600,
+        "dataBit": "8",
+        "parityBit": "None",
+        "stopBit": "1"
+      },
+      "devices": [
+        {
+          "id": "012fec66-1059-4d9c-a743-49417402f743",
+          "name": "port 3 device",
+          "deviceModelId": "6ce3f210-0d34-4193-ba0f-e83354b939fe",
+          "protocolType": "modbusRtu",
+          "interfaceType": "com3",
+          "slaveId": 1,
+          "datapointConfigs": {
+            "dp81": {
+              "enabled": true,
+              "functionCode": "ReadInputRegister",
+              "address": "100",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": 10000,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp82": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp125": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp126": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp129": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp142": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp143": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp145": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": 1000,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp146": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp148": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp149": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp150": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp151": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp152": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp153": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp154": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp155": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp156": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp157": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp158": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            },
+            "dp301": {
+              "enabled": false,
+              "functionCode": "ReadInputRegister",
+              "address": "",
+              "dataType": "FLOAT32",
+              "endianness": "little",
+              "expression": "",
+              "reportInterval": null,
+              "events": [],
+              "registerType": "inputRegister",
+              "readEnabled": true,
+              "readInterval": null,
+              "write": {
+                "enabled": false,
+                "functionCode": "",
+                "expression": "",
+                "endianness": "little"
+              }
+            }
+          },
+          "stateConfigs": {},
+          "responseTimeoutMs": null,
+          "maxReadLength": null
+        }
+      ]
+    },
+    "tcp": {
+      "devices": []
+    }
+  }
+}
