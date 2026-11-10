@@ -13,7 +13,10 @@ or unresponsive, and every request ptcsw sends is logged with millisecond timest
 
 ```
 Porta Studio project ──build & deploy──► ptcsw on the PortaCON
-                                              │ reads/writes over the serial path in 프로필 → COM1 설정 → 포트 경로
+                                              |
+                                              |
+                                              | (reads/writes over the serial path in 프로필 → COM1 설정 → 포트 경로)
+                                              |
                                               ▼
                                   this simulator (/home/portacon/modbus-plc-simulator/ttyCOM1)
 ```
