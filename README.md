@@ -6,8 +6,12 @@ hardware. Python 3 only, no sudo. We're currently using the CA111111 PortaCON at
 ## Setup
 
 ```bash
-./remote.sh portacon@<ip> install                  # once, from your laptop
-python3 studio_to_init.py "project.json" --fresh   # on the PortaCON
+git clone https://github.com/ajun-jo/portacon-modbus-simulator.git
+cd portacon-modbus-simulator
+./remote.sh portacon@<ip> install                  # copies it to the PortaCON
+
+# then on the PortaCON, in ~/modbus-plc-simulator:
+python3 studio_to_init.py "project.json" --fresh
 ./run.sh reset com1 com2 com3
 ```
 
