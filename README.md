@@ -10,7 +10,7 @@ git clone https://github.com/ajun-jo/portacon-modbus-simulator.git
 cd portacon-modbus-simulator
 ./remote.sh portacon@<ip> install                  # copies it to the PortaCON
 
-# then on the PortaCON, in ~/modbus-plc-simulator:
+# then on the PortaCON (~/modbus-plc-simulator):
 python3 studio_to_init.py "project.json" --fresh
 ./run.sh reset com1 com2 com3
 ```
@@ -29,7 +29,6 @@ wrote. Start/Stop is its only control.
 ./run.sh status                            # ./run.sh stop com1 · ./run.sh com1
 python3 modbus_client.py show com1         # values and ptcsw's write counts
 python3 modbus_client.py set com1 dp81=0
-./run.sh silent com1 60                    # device down for 60 s
 ```
 
 Delays, schedules and auto-reset are files next to each simulator: `com1.delay`, `com1.schedule.json`,
