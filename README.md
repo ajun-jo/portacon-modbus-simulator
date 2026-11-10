@@ -29,6 +29,7 @@ Porta Studio project ──build & deploy──► ptcsw on the PortaCON
 
 From a laptop with this repo:
 
+We're currently using CA111111 PortaCON at our office.
 ```bash
 ssh-copy-id portacon@192.168.10.97          # so SSH stops asking for a password
 ./remote.sh portacon@192.168.10.97 install
