@@ -32,8 +32,8 @@ Test controls:
   - --writes-log: just the master's writes (with the time since the last write to that address) and RESETs.
   - --refuse (or "refuse" in the file) makes writes to chosen ranges answer with an exception, by default code 02
     for hr and coil 9000-9099. Reads still succeed.
-  - --control-port (127.0.0.1 only) is a Modbus TCP port for people and tools: modbus_client.py and the web UI
-    change values there, so they never become a second master on a pty, and their writes aren't counted.
+  - --control-port (127.0.0.1 only) is a Modbus TCP port for people and tools: modbus_client.py
+    changes values there, so they never become a second master on a pty, and their writes aren't counted.
     It also accepts FC 65 (write any table, including di/ir) and FC 66 (reset the write counts).
 """
 import argparse
@@ -362,6 +362,7 @@ class Memory:
         self.reads, self.reads_dirty = {}, False  # unit -> {tag: [last read time, count]} from the master
         self.last_write = {}  # (unit, table, addr) -> time.time() of the master's last write there
         self.since_last = None  # seconds since the previous master write to the first address just written
+        self.gaps = {}  # the same for every address just written
         self.refuse, self.refuse_code = list(refuse), refuse_code
 
     def tables(self, unit):
@@ -393,7 +394,10 @@ class Memory:
             now = time.time()
             prev = self.last_write.get((unit, table, addr))
             self.since_last = None if prev is None else now - prev
+            self.gaps = {}  # address -> seconds since the master's previous write there (None: first write)
             for i in range(len(values)):
+                p = self.last_write.get((unit, table, addr + i))
+                self.gaps[addr + i] = None if p is None else now - p
                 self.last_write[(unit, table, addr + i)] = now
 
     def _count(self, unit, table, addr, n):
@@ -458,6 +462,17 @@ class Memory:
                 self.tables(int(u))[table_name(table)].update({int(a): int(v) for a, v in m.items()})
         self.writes = {int(u): dict(c) for u, c in data.get("writes", {}).items()}
         return True
+
+    def dp_values(self, unit, table, addr, values):
+        """[(tag, decoded value)] for the tags lying entirely inside this read or write, in address order."""
+        out = []
+        for t in sorted(self.tags(unit, table, addr, len(values)), key=lambda t: (t["addr"], t.get("bit", 0))):
+            off = t["addr"] - addr
+            try:
+                out.append((t, decode_value(t["type"], values[off:off + t["words"]], t)))
+            except Exception:
+                pass
+        return out
 
     def describe(self, unit, table, addr, values):
         """'  {투입수=120345, 양품수=120308}' for the tags lying entirely inside this read or write."""
@@ -624,7 +639,8 @@ class Schedules:
             if t["type"] == "BIT":
                 words = [set_bit(self.mem.read(t["unit"], t["table"], t["addr"], 1)[0], t["bit"], words[0])]
             self.mem.write(t["unit"], t["table"], t["addr"], words, master=False)
-            log("schedule: %s = %r" % (s["label"], s["values"][k]))
+            log(dp_line("SET", "%s = %s" % (t["tag"], fmt_value(s["values"][k])), "schedule", where_of(t),
+                        "unit %d · every %g s" % (t["unit"], s["every"])))
             changed = True
         if changed:
             self.mem.save()
@@ -671,10 +687,13 @@ class AutoReset:
             self.done[key] = now
             before = self.mem.read(unit, table, addr, count)
             self.mem.write(unit, table, addr, [0] * count, master=False)
-            msg = "RESET unit %d %s %d%s -> 0 (was %s; no write for %.3f s since %s.%03d)" % (
-                unit, table, addr, " x%d" % count if count > 1 else "", fmt_values(table, before), now - last,
-                time.strftime("%H:%M:%S", time.localtime(last)), int(last % 1 * 1000))
-            log("auto-reset: " + msg)
+            names = ", ".join(t["tag"] for t in self.mem.tags(unit, table, addr, count, whole=False))
+            where = "%s %d%s" % (table, addr, " x%d" % count if count > 1 else "")
+            msg = dp_line("RESET", "%s = 0 (was %s)" % (names or "(no DP)", fmt_values(table, before)), "auto-reset",
+                          where, "unit %d · no write for %.3f s, since %s.%03d" % (
+                              unit, now - last, time.strftime("%H:%M:%S", time.localtime(last)),
+                              int(last % 1 * 1000)))
+            log(msg)
             if wlog.f:
                 wlog(msg)
             changed = True
@@ -718,6 +737,65 @@ def fmt_values(table, vals):
     return "[%s] (%d)" % (hexs, vals[0]) if len(vals) == 1 else "[%s]" % hexs
 
 
+def fmt_value(v):
+    """A decoded value as people read it: strings quoted, floats without float noise."""
+    if isinstance(v, str):
+        return json.dumps(v, ensure_ascii=False)
+    if isinstance(v, float):
+        return "%.7g" % v
+    return str(v)
+
+
+def where_of(t):
+    """'coil 90', 'hr 1104' or 'hr 5533 bit 6': where a tag lives."""
+    return "%s %d%s" % (t["table"], t["addr"], " bit %d" % t["bit"] if t["type"] == "BIT" else "")
+
+
+def dp_line(verb, what, by, where, detail, extra=""):
+    """One log line, DP and value first:
+    READ   dp82 = 1                    by ptcsw      coil 70        [FC01 coil 70 x21 · unit 1 · pty RTU]"""
+    return "%-6s %-28s by %-11s %-14s [%s]%s" % (verb, what, by, where, detail, extra)
+
+
+def who_parts(who):
+    """'pty RTU unit 1 fc01' -> ('ptcsw', 'unit 1 · pty RTU'). Control-port requests (modbus_client.py)
+    are 'manual'; a master on TCP from another machine is 'master'."""
+    m = re.match(r"^(.*) (\S+) unit (\d+) fc\d+$", who)
+    if not m:
+        return "?", who
+    peer, framing, unit = m.groups()
+    if peer.startswith("ctl"):
+        by = "manual"
+    elif peer == "pty" or " 127.0.0.1:" in peer:  # ptcsw runs on the same PortaCON
+        by = "ptcsw"
+    else:
+        by = "master"
+    return by, "unit %s · %s %s" % (unit, peer, framing)
+
+
+def log_dps(verb, mem, unit, who, fc, table, addr, vals, gaps=None, out=None):
+    """One line per DP in a read or write; one raw line when no DP lies inside it."""
+    by, via = who_parts(who)
+    detail = "FC%02d %s %d%s · %s" % (fc, table, addr, " x%d" % len(vals) if len(vals) > 1 else "", via)
+    lines = []
+    for t, v in mem.dp_values(unit, table, addr, vals):
+        extra = ""
+        if gaps is not None:
+            g = gaps.get(t["addr"])
+            extra = "  first write" if g is None else "  +%.3f s since last write" % g
+        lines.append(dp_line(verb, "%s = %s" % (t["tag"], fmt_value(v)), by, where_of(t), detail, extra))
+    if not lines:
+        extra = ""
+        if gaps is not None:
+            g = gaps.get(addr)
+            extra = "  first write" if g is None else "  +%.3f s since last write" % g
+        lines.append(dp_line(verb, "(no DP) = %s" % fmt_values(table, vals), by,
+                             "%s %d%s" % (table, addr, " x%d" % len(vals) if len(vals) > 1 else ""), detail, extra))
+    for line in lines:
+        (out or log)(line)
+    return lines
+
+
 def _check_qty(qty, hi):
     if not 1 <= qty <= hi:
         raise ModbusError(EXC_ILLEGAL_VALUE, "quantity %d is not in 1-%d" % (qty, hi))
@@ -725,13 +803,13 @@ def _check_qty(qty, hi):
 
 def _write(mem, unit, who, table, addr, vals, reply, master):
     mem.write(unit, table, addr, vals, master)
-    desc = mem.describe(unit, table, addr, vals)
-    log("%s write %s %d x%d = %s%s" % (who, table, addr, len(vals), fmt_values(table, vals), desc))
+    fc = int(who.rsplit("fc", 1)[1]) if re.search(r"fc\d+$", who) else 0
+    # WRITE: the master (ptcsw) wrote it. SET: changed in the simulator (modbus_client.py).
+    lines = log_dps("WRITE" if master else "SET", mem, unit, who, fc, table, addr, vals,
+                    gaps=mem.gaps if master else None)
     if master and wlog.f:
-        gap = mem.since_last
-        wlog("write %s %d x%d = %s%s  [%s]  %s" % (
-            table, addr, len(vals), fmt_values(table, vals), desc,
-            "first write here" if gap is None else "+%.3f s since the last write here" % gap, who))
+        for line in lines:
+            wlog(line)
     mem.save()
     return reply
 
@@ -760,8 +838,7 @@ def handle_pdu(pdu, mem, unit, who, control=False):
         vals = mem.read(unit, table, addr, qty)
         if not control:
             mem.note_read(unit, table, addr, qty)
-        log("%s read %s %d x%d = %s%s" % (who, table, addr, qty, fmt_values(table, vals),
-                                          mem.describe(unit, table, addr, vals)))
+        log_dps("READ", mem, unit, who, fc, table, addr, vals)
         data = pack_bits(vals) if bit else struct.pack(">%dH" % qty, *vals)
         return bytes([fc, len(data)]) + data
     if fc == 5:
@@ -1258,7 +1335,7 @@ async def main():
                                                         framing.upper() if framing else "detected per connection"))
     servers.append(await asyncio.start_server(lambda r, w: srv.tcp_client(r, w, control=True),
                                               "127.0.0.1", cfg["control_port"]))
-    log("control port 127.0.0.1:%d (modbus_client.py and the web UI)" % cfg["control_port"])
+    log("control port 127.0.0.1:%d (modbus_client.py)" % cfg["control_port"])
     if a.reads_file and os.path.exists(a.reads_file):
         os.remove(a.reads_file)
     await ticker(delay, schedules, mem, a.reads_file, resets, silent)

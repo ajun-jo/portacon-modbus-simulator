@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Builds simulator files from a Porta Studio project export, so the simulator matches what the build compiles
 into ptcsw: one file per Studio port, with every device on it (by slave id) and every enabled datapoint.
-The web UI's "Load Studio project" does the same; this is the command-line way.
+This is how a Studio project gets into the simulator (the web monitor is read-only).
 
   python3 studio_to_init.py "포타콘 미들웨어 크래쉬 버그 테스팅.json"              -> machines/com1.init.json, ...
   python3 studio_to_init.py project.json --prefix crash                          -> machines/crash-com1.init.json, ...
@@ -11,7 +11,7 @@ Studio port -> simulator endpoint (a pty for serial ports; its path goes into ap
   tcp          -> a TCP port per device (5030 and up unless the device names one)
 Datapoints: registerType -> table, address as is (0-based), dataType -> type, endianness -> word order.
 Disabled datapoints and ones with no address are left out. The simulator holds raw values and ptcsw applies the
-expression, so the web UI shows both the raw value and what IoTLink should show.
+expression, so the web monitor shows both the raw value and what IoTLink should show.
 
 Starting values say which DP, port and slave they belong to, so a mixed-up address or port shows in IoTLink:
   FLOAT32   <dp>.<port><slave>      dp81 on COM1, slave 1 -> 81.11      dp81 on COM3, slave 2 -> 81.32

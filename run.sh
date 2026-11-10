@@ -5,7 +5,7 @@
 #   ./run.sh stop sp1 | stop all
 #   ./run.sh reset sp1 | reset all            back to the file's starting values (and zero write counts), restarting
 #   ./run.sh status                           which are running, and on what
-#   ./run.sh ui / ./run.sh stop ui            web UI on port 8080 (./run.sh ui --port 8081 for another port)
+#   ./run.sh ui / ./run.sh stop ui            web monitor (read-only) on port 8080 (./run.sh ui --port 8081 for another port)
 #   ./run.sh silent com2 60                   no replies for 60 s (device down), without a restart; silent com2 0 ends it
 #   ./run.sh boot                             start whatever was running before a reboot (cron runs this @reboot)
 # Values and write counts are kept across restarts in <name>.state.json.

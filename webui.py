@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
-"""Web UI for the simulators: open it in a browser to start and stop them, see and change values, set reply
-delays and value schedules, count the master's writes, and watch what ptcsw asks for.
+"""Web monitor for the simulators: which DPs each simulated port serves, their live values, what IoTLink should show
+for them, and a live log of who read or changed which DP. Its only control is a Start/Stop button per port.
 
   python3 webui.py                      http://<this machine>:8080
   python3 webui.py --port 8081 --bind 127.0.0.1
 
-It runs next to the simulators (on the PortaCON: ./remote.sh <host> ui) and controls them through run.sh.
-Values come from each simulator's <name>.state.json, so the UI's refreshes don't show up in the request log.
-Changes go through each simulator's control port, never through a serial port, so the UI is never a second
-master, and its writes aren't counted. There is no login: anyone who can reach the port can change simulator
-values (nothing else).
+Apart from starting and stopping a port's simulator (the same as ./run.sh <name> and ./run.sh stop <name>), it
+changes nothing. Configuration (values, delays, schedules, auto-reset, loading a Studio project) is done from the terminal with run.sh, modbus_client.py, studio_to_init.py and the files next to each
+simulator. Values come from each simulator's <name>.state.json and ptcsw's reads from <name>.reads.json, so the
+monitor never talks Modbus and never shows up in the request log.
 """
 import argparse
 import json
@@ -23,15 +22,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-from modbus_client import Client, ModbusException  # noqa: E402
-from modbus_plc_sim import (  # noqa: E402
-    FC_RESET_COUNTS, decode_value, encode_value, find_tag, load_config, set_bit, table_name, word_count,
-)
+from modbus_plc_sim import decode_value, load_config  # noqa: E402
 import studio_to_init  # noqa: E402
 
-PROJECT_FILE = os.path.join(HERE, "studio_project.json")  # which Studio project is loaded, and when
-
-READ_LINE = re.compile(r"^(\S+) (tcp \S+|udp \S+|pty) (TCP|RTU|ASCII) unit (\d+) fc0[1-4] read ")
+# A master's read in the request log, e.g.
+# 2026-11-10T02:23:04.420 READ   dp82 = 1   by ptcsw   coil 70   [FC01 coil 70 x21 · unit 1 · pty RTU]
+READ_LINE = re.compile(r"^(\S+) READ .* by (?!manual)\S+ .*\[FC0[1-4] [^\]]* · unit (\d+) · (tcp \S+|udp \S+|pty) "
+                       r"(TCP|RTU|ASCII)\]")
 
 
 def machine_names():
@@ -68,7 +65,8 @@ def tail(file, n, max_bytes=262144):
 
 
 def last_poll(name):
-    """The newest read request from a master in the log: who asked, with which framing, how many seconds ago."""
+    """The newest read request from a master in the log: who asked, with which framing, how many seconds ago.
+    (check_sim.py uses this too, to stay off a port ptcsw is polling.)"""
     for line in reversed(tail(path(name, ".log"), 400)):
         m = READ_LINE.match(line)
         if m:
@@ -76,7 +74,7 @@ def last_poll(name):
                 ago = (datetime.now() - datetime.fromisoformat(m.group(1))).total_seconds()
             except ValueError:
                 return None
-            return {"ago": round(ago, 1), "peer": m.group(2), "framing": m.group(3), "unit": int(m.group(4))}
+            return {"ago": round(ago, 1), "peer": m.group(3), "framing": m.group(4), "unit": int(m.group(2))}
     return None
 
 
@@ -89,281 +87,61 @@ def read_json(file, default):
         return default
 
 
-def write_json(file, data):
-    tmp = file + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=1)
-    os.replace(tmp, file)
-
-
-class Machine:
-    def __init__(self, name):
-        self.name = name
-        self.file = os.path.join(HERE, "machines", name + ".init.json")
-        self.cfg = load_config(self.file)
-
-    def summary(self):
-        c, ep = self.cfg, self.cfg["endpoint"]
-        pid = pid_of(self.name)
-        sched = read_json(path(self.name, ".schedule.json"), [])
-        return {"name": self.name, "title": c.get("machine", self.name), "kind": ep["kind"],
-                "link": ep.get("path"), "port": ep.get("port"), "framing": c.get("framing"),
-                "studio_port": c.get("studio_port"), "application_json": c.get("application_json"),
-                "control_port": c["control_port"], "real_plc": c.get("real_plc"),
-                "devices": [{"unit": u, "name": d["name"], "protocol": d.get("protocol"), "tags": len(d["tags"])}
-                            for u, d in sorted(c["devices"].items())],
-                "running": pid is not None, "pid": pid, "poll": last_poll(self.name) if pid else None,
-                "delay": read_json(path(self.name, ".delay"), {}),
-                "schedules": (sched if isinstance(sched, list) else sched.get("schedules", [])) + c.get("schedules", []),
-                "resets": read_json(path(self.name, ".reset.json"), []),
-                "silent_until": (read_json(path(self.name, ".silent.json"), {}) or {}).get("until"),
-                "now": time.time(),
-                "file_schedules": len(c.get("schedules", []))}
-
-    def state(self):
-        st = read_json(path(self.name, ".state.json"), None)
-        if not isinstance(st, dict) or "units" not in st:
-            return None
-        return st
-
-    def detail(self):
-        running = pid_of(self.name) is not None
-        st = self.state() if running else None
-        units = (st or {}).get("units", {})
-        writes = (st or {}).get("writes", {})
-        devices = []
-        for u, d in sorted(self.cfg["devices"].items()):
-            tables = units.get(str(u), {})
-            counts = writes.get(str(u), {})
-            rows = []
-            for t in d["tags"]:
-                row = {"tag": t["tag"], "group": t.get("group", ""), "plc": t.get("plc_addr", ""),
-                       "type": t["type"], "table": t["table"], "addr": t["addr"], "bit": t.get("bit"),
-                       "words": t["words"], "pending": t["pending"], "note": t.get("note", ""),
-                       "expression": t.get("expression", ""), "start": t.get("value"),
-                       "word_order": t.get("word_order", ""), "writes": counts.get(t["tag"], 0),
-                       "writable": t["table"] in ("hr", "coil")}
-                if st is not None and not t["pending"]:
-                    m = tables.get(t["table"], {})
-                    words = [m.get(str(t["addr"] + i), 0) for i in range(t["words"])]
-                    try:
-                        row["value"] = decode_value(t["type"], words, t)
-                    except Exception as ex:  # e.g. bytes that aren't valid text
-                        row["value"], row["error"] = None, str(ex)
-                    row["raw"] = " ".join("%04X" % w for w in words) if t["table"] in ("hr", "ir") else None
-                rows.append(row)
-            tagged = {t["tag"] for t in d["tags"]}
-            other = {k: v for k, v in counts.items() if k not in tagged}
-            devices.append({"unit": u, "name": d["name"], "tags": rows, "other_writes": other})
-        extra = sorted(int(u) for u in writes if int(u) not in self.cfg["devices"] and writes[u])
-        return {"machine": self.summary(), "devices": devices,
-                "unknown_unit_writes": {u: writes[str(u)] for u in extra}}
-
-    def client(self, unit):
-        if not pid_of(self.name):
-            raise ValueError("%s isn't running; start it first" % self.name)
-        try:
-            return Client("127.0.0.1", self.cfg["control_port"], unit, 3)
-        except SystemExit as ex:
-            raise ValueError(str(ex))
-
-    def set(self, unit, values):
-        todo = []
-        for tag, value in values.items():
-            t = find_tag(self.cfg, tag, unit)
-            if t["pending"]:
-                raise ValueError("%s has no Modbus address yet" % tag)
-            try:
-                todo.append((t, encode_value(t["type"], value, t)))
-            except ValueError as ex:
-                raise ValueError("%s: %s" % (tag, ex))
-        cl = self.client(unit)
-        try:
-            for t, words in todo:
-                if t["type"] == "BIT":  # merge into the register from the state file, so no read is logged
-                    reg = ((self.state() or {}).get("units", {}).get(str(unit), {}).get(t["table"], {})
-                           .get(str(t["addr"]), 0))
-                    words = [set_bit(reg, t["bit"], words[0])]
-                cl.write(t["table"], t["addr"], words, unit)
-        except ModbusException as ex:
-            raise ValueError(str(ex))
-        except SystemExit as ex:
-            raise ValueError(str(ex))
-        finally:
-            cl.sock.close()
-
-    def reset_counts(self):
-        cl = self.client(min(self.cfg["devices"]) if self.cfg["devices"] else 1)
-        try:
-            cl.call(bytes([FC_RESET_COUNTS]))
-        except SystemExit as ex:
-            raise ValueError(str(ex))
-        finally:
-            cl.sock.close()
-
-    def set_delay(self, body):
-        """{"default": ms, "cycle": {"ms": [..], "every_s": s}}; unit/fc entries already in the file are kept."""
-        old = read_json(path(self.name, ".delay"), {})
-        new = {k: old[k] for k in ("unit", "fc") if old.get(k)}
-        default = int(body.get("default") or 0)
-        if default < 0:
-            raise ValueError("delay must not be negative")
-        if default:
-            new["default"] = default
-        cyc = body.get("cycle")
-        if cyc and cyc.get("ms"):
-            ms = [int(v) for v in cyc["ms"]]
-            every = float(cyc.get("every_s") or 0)
-            if every <= 0 or min(ms) < 0:
-                raise ValueError("a delay cycle needs ms values ≥ 0 and a period > 0 s")
-            new["cycle"] = {"ms": ms, "every_s": every}
-        if new:
-            write_json(path(self.name, ".delay"), new)
-        elif os.path.exists(path(self.name, ".delay")):
-            os.remove(path(self.name, ".delay"))
-        return new
-
-    def set_resets(self, items):
-        out = []
-        for r in items:
-            unit = int(r.get("unit") or min(self.cfg["devices"]))
-            table = table_name(r["table"])
-            if table not in ("coil", "hr"):
-                raise ValueError("auto-reset works on coils and holding registers (what a master writes)")
-            addr, after = int(r["addr"]), float(r.get("after_s") or 0)
-            if not 0 <= addr <= 65535 or after <= 0:
-                raise ValueError("auto-reset needs an address 0-65535 and a time > 0 s")
-            out.append({"unit": unit, "table": table, "addr": addr, "after_s": after})
-        if out:
-            write_json(path(self.name, ".reset.json"), out)
-        elif os.path.exists(path(self.name, ".reset.json")):
-            os.remove(path(self.name, ".reset.json"))
-        return out
-
-    def set_silent(self, seconds):
-        seconds = float(seconds or 0)
-        if seconds > 0:
-            write_json(path(self.name, ".silent.json"), {"until": time.time() + seconds})
-        elif os.path.exists(path(self.name, ".silent.json")):
-            os.remove(path(self.name, ".silent.json"))
-        return seconds
-
-    def set_schedules(self, items):
-        out = []
-        for s in items:
-            unit = int(s.get("unit") or min(self.cfg["devices"]))
-            values = s.get("values")
-            if isinstance(values, str):
-                values = [v.strip() for v in values.split(",") if v.strip()]
-            every = float(s.get("every_s") or 0)
-            if not values or every <= 0:
-                raise ValueError("a schedule needs values and a period > 0 s")
-            if s.get("tag"):
-                t = find_tag(self.cfg, s["tag"], unit)
-                if t["pending"]:
-                    raise ValueError("%s has no Modbus address yet" % t["tag"])
-                item = {"unit": unit, "tag": t["tag"]}
-            else:
-                t = {"table": table_name(s["table"]), "addr": int(s["addr"]), "type": (s.get("type") or "UINT16")}
-                t["type"] = t["type"].upper()
-                item = {"unit": unit, "table": t["table"], "addr": t["addr"], "type": t["type"]}
-                word_count(t["type"], t)
-            vals = []
-            for v in values:
-                try:
-                    encode_value(t["type"], v, t)
-                except ValueError as ex:
-                    raise ValueError("%s: %s" % (item.get("tag") or "%s %d" % (t["table"], t["addr"]), ex))
-                vals.append(float(v) if t["type"] == "FLOAT32" else int(str(v), 0) if t["type"] != "STRING" else v)
-            item.update({"values": vals, "every_s": every})
-            out.append(item)
-        if out:
-            write_json(path(self.name, ".schedule.json"), out)
-        elif os.path.exists(path(self.name, ".schedule.json")):
-            os.remove(path(self.name, ".schedule.json"))
-        return out
-
-
-def generated_names():
-    """Simulator files made from a Studio project (by the UI or studio_to_init.py)."""
-    out = []
-    for n in machine_names():
-        c = read_json(os.path.join(HERE, "machines", n + ".init.json"), {})
-        if str(c.get("comment", "")).startswith(studio_to_init.GENERATED):
-            out.append(n)
-    return out
-
-
-def project_info():
-    """The loaded Studio project: its ports, and for every DP what's served and what IoTLink should show."""
-    info = read_json(PROJECT_FILE, {})
-    names = [n for n in info.get("files", []) if n in machine_names()] or generated_names()
-    ports, dps = [], []
+def port_view(name):
+    """One simulated port: where it listens, whether it runs and is polled, and every DP with its live value."""
+    cfg = load_config(os.path.join(HERE, "machines", name + ".init.json"))
+    ep = cfg["endpoint"]
+    pid = pid_of(name)
     now = time.time()
-    for n in names:
-        try:
-            m = Machine(n)
-        except SystemExit as ex:
-            ports.append({"name": n, "error": str(ex)})
-            continue
-        s = m.summary()
-        ports.append({k: s[k] for k in ("name", "title", "kind", "link", "port", "studio_port", "application_json",
-                                         "running", "poll", "devices")})
-        reads = read_json(path(n, ".reads.json"), {}) if s["running"] else {}
-        for dev in m.detail()["devices"]:
-            seen = reads.get(str(dev["unit"]), {})
-            for t in dev["tags"]:
-                src = next((x for x in m.cfg["devices"][dev["unit"]]["tags"] if x["tag"] == t["tag"]), {})
-                row = {"sim": n, "port": s["studio_port"] or n, "unit": dev["unit"], "device": dev["name"],
-                       "dp": t["tag"], "table": t["table"], "addr": t["addr"], "type": t["type"],
-                       "word_order": t["word_order"], "value": t.get("value"), "expression": t["expression"],
-                       "report_ms": src.get("report_ms"), "write_only": bool(src.get("write_only")),
-                       "writes": t["writes"], "running": s["running"]}
-                if row["value"] is not None:
+    st = read_json(path(name, ".state.json"), {}) if pid else {}
+    st = st if isinstance(st, dict) else {}
+    units, writes = st.get("units", {}), st.get("writes", {})
+    reads = read_json(path(name, ".reads.json"), {}) if pid else {}
+    silent = (read_json(path(name, ".silent.json"), {}) or {}).get("until") or 0
+    dps = []
+    for unit, dev in sorted(cfg["devices"].items()):
+        tables, counts, seen = units.get(str(unit), {}), writes.get(str(unit), {}), reads.get(str(unit), {})
+        for t in dev["tags"]:
+            row = {"dp": t["tag"], "unit": unit, "device": dev["name"], "table": t["table"], "addr": t["addr"],
+                   "bit": t.get("bit") if t["type"] == "BIT" else None, "type": t["type"], "words": t["words"],
+                   "pending": t["pending"], "expression": t.get("expression") or "", "report_ms": t.get("report_ms"),
+                   "write_only": bool(t.get("write_only")), "writes": counts.get(t["tag"], 0)}
+            if pid and st and not t["pending"]:
+                m = tables.get(t["table"], {})
+                words = [m.get(str(t["addr"] + i), 0) for i in range(t["words"])]
+                try:
+                    row["value"] = decode_value(t["type"], words, t)
+                except Exception as ex:  # e.g. bytes that aren't valid text
+                    row["value"], row["error"] = None, str(ex)
+                if row.get("value") is not None and not isinstance(row["value"], str):
                     try:
-                        row["expected"] = studio_to_init.apply_expression(t["expression"], row["value"])
-                    except ValueError as ex:
-                        row["expected_error"] = str(ex)
-                if t["tag"] in seen:
-                    row["read_ago"] = round(now - seen[t["tag"]][0], 1)
-                    row["read_count"] = seen[t["tag"]][1]
-                dps.append(row)
-    return {"name": info.get("name"), "loaded": info.get("loaded"), "notes": info.get("notes", []),
-            "ports": ports, "dps": dps}
+                        row["iotlink"] = studio_to_init.apply_expression(row["expression"], row["value"])
+                    except ValueError:
+                        pass
+                elif isinstance(row.get("value"), str):
+                    row["iotlink"] = row["value"]
+            if t["tag"] in seen:
+                row["read_ago"] = round(now - seen[t["tag"]][0], 1)
+                row["reads"] = seen[t["tag"]][1]
+            dps.append(row)
+    return {"name": name, "title": cfg.get("machine", name), "port": cfg.get("studio_port") or name.upper(),
+            "kind": ep["kind"], "link": ep.get("path"), "tcp": ep.get("port"), "framing": cfg.get("framing"),
+            "running": pid is not None, "poll": last_poll(name) if pid else None,
+            "silent_left": round(silent - now) if silent > now else 0, "dps": dps}
 
 
-def load_project(name, proj):
-    """Replace the running Studio simulators with ones for this project, at their starting values."""
-    if not isinstance(proj, dict) or not isinstance(proj.get("interfaces"), dict):
-        raise ValueError("that isn't a Porta Studio project export (no \"interfaces\")")
-    old = generated_names()
-    for n in old:  # the new project takes over the COM ports, so stop every Studio simulator first
-        run_sh("stop", n)
-    files, notes = studio_to_init.generate(proj, os.path.join(HERE, "machines"), fresh=True, source=name)
-    if not files:
-        raise ValueError("no Modbus devices with enabled datapoints in %s%s" % (name, (": " + "; ".join(notes))
-                                                                               if notes else ""))
-    new = [f for f, _ in files]
-    for n in old:
-        if n not in new and "-" not in n:  # files from the last project loaded here (prefixed ones are kept)
-            os.remove(os.path.join(HERE, "machines", n + ".init.json"))
-    for n in new:
-        for ext in (".state.json", ".reads.json", ".schedule.json", ".delay", ".reset.json", ".silent.json"):
-            if os.path.exists(path(n, ext)):
-                os.remove(path(n, ext))
-    write_json(PROJECT_FILE, {"name": name, "loaded": time.strftime("%Y-%m-%d %H:%M:%S"), "files": new,
-                              "notes": notes})
-    out = [run_sh(n) for n in new]
-    return out
-
-
-def run_sh(*args):
-    p = subprocess.run(["./run.sh"] + list(args), cwd=HERE, capture_output=True, text=True, timeout=120)
-    return (p.stdout + p.stderr).strip()
+def overview():
+    ports = []
+    for n in machine_names():
+        try:
+            ports.append(port_view(n))
+        except SystemExit as ex:  # a broken file shouldn't hide the others
+            ports.append({"name": n, "title": n, "port": n.upper(), "error": str(ex), "running": False, "dps": []})
+    return {"ports": ports, "now": time.time()}
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "ModbusSimUI"
+    server_version = "ModbusSimMonitor"
 
     def log_message(self, fmt, *args):  # keep the console quiet; errors still print
         pass
@@ -377,11 +155,6 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def machine(self, name):
-        if name not in machine_names():
-            raise LookupError("no machine %r" % name)
-        return Machine(name)
-
     def do_GET(self):
         url = self.path.split("?", 1)
         parts = [p for p in url[0].split("/") if p]
@@ -389,617 +162,551 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if not parts:
                 return self.send(200, PAGE.encode(), "text/html; charset=utf-8")
-            if parts == ["api", "project"]:
-                return self.send(200, project_info())
-            if parts == ["api", "machines"]:
-                out = []
-                for n in machine_names():
-                    try:
-                        out.append(Machine(n).summary())
-                    except SystemExit as ex:  # a broken file shouldn't hide the others
-                        out.append({"name": n, "title": n, "error": str(ex), "devices": [], "running": False})
-                return self.send(200, out)
-            if len(parts) == 3 and parts[:2] == ["api", "m"]:
-                return self.send(200, self.machine(parts[2]).detail())
-            if len(parts) == 4 and parts[:2] == ["api", "m"] and parts[3] == "log":
-                self.machine(parts[2])
-                n = min(int(query.get("n", 200)), 2000)
+            if parts == ["api", "overview"]:
+                return self.send(200, overview())
+            if len(parts) == 3 and parts[:2] == ["api", "log"]:
+                if parts[2] not in machine_names():
+                    return self.send(404, {"error": "no simulator %r" % parts[2]})
+                n = min(int(query.get("n", 300)), 2000)
                 return self.send(200, {"lines": tail(path(parts[2], ".log"), n)})
             self.send(404, {"error": "not found"})
-        except LookupError as ex:
-            self.send(404, {"error": str(ex)})
-        except SystemExit as ex:
-            self.send(500, {"error": str(ex)})
         except Exception as ex:
             self.send(500, {"error": "%s: %s" % (type(ex).__name__, ex)})
 
+    def refuse(self):
+        self.send(405, {"error": "the monitor only starts and stops simulators; configure them from the terminal"})
+
     def do_POST(self):
+        """POST /api/sim/<name>/start or /stop: the same as ./run.sh <name> and ./run.sh stop <name>."""
         parts = [p for p in self.path.split("?")[0].split("/") if p]
+        if len(parts) != 4 or parts[:2] != ["api", "sim"] or parts[3] not in ("start", "stop"):
+            return self.refuse()
+        name, action = parts[2], parts[3]
+        if name not in machine_names():
+            return self.send(404, {"error": "no simulator %r" % name})
         try:
-            n = int(self.headers.get("Content-Length") or 0)
-            body = json.loads(self.rfile.read(n) or b"{}") if n else {}
-            if parts == ["api", "project"]:
-                load_project(str(body.get("name") or "project.json"), body.get("project"))
-                return self.send(200, project_info())
-            if parts[:2] != ["api", "m"] or len(parts) != 4:
-                return self.send(404, {"error": "not found"})
-            name, action = parts[2], parts[3]
-            names = machine_names() if name == "all" else [self.machine(name).name]
-            if action in ("start", "reset"):  # start = (re)start keeping values; reset = starting values
-                cmd = ["reset"] if action == "reset" else []
-                return self.send(200, {"output": "\n".join((run_sh(*cmd, m).splitlines() or [""])[-1]
-                                                           for m in names)})
-            if action == "stop":
-                return self.send(200, {"output": "\n".join(run_sh("stop", m) for m in names)})
-            m = self.machine(name)
-            if action == "set":
-                values = body.get("values", body)
-                m.set(int(body.get("unit") or min(m.cfg["devices"])), values)
-                return self.send(200, {"ok": True})
-            if action == "reset-counts":
-                m.reset_counts()
-                return self.send(200, {"ok": True})
-            if action == "delay":
-                return self.send(200, {"delay": m.set_delay(body)})
-            if action == "resets":
-                return self.send(200, {"resets": m.set_resets(body.get("resets", []))})
-            if action == "silent":
-                return self.send(200, {"seconds": m.set_silent(body.get("seconds", 0))})
-            if action == "schedules":
-                return self.send(200, {"schedules": m.set_schedules(body.get("schedules", []))})
-            self.send(404, {"error": "not found"})
-        except LookupError as ex:
-            self.send(404, {"error": str(ex)})
-        except (ValueError, TypeError, KeyError) as ex:
-            self.send(400, {"error": str(ex)})
-        except SystemExit as ex:
-            self.send(400, {"error": str(ex)})
+            args = ["./run.sh", name] if action == "start" else ["./run.sh", "stop", name]
+            p = subprocess.run(args, cwd=HERE, capture_output=True, text=True, timeout=60)
+            out = (p.stdout + p.stderr).strip()
         except Exception as ex:
-            self.send(500, {"error": "%s: %s" % (type(ex).__name__, ex)})
+            return self.send(500, {"error": "%s: %s" % (type(ex).__name__, ex)})
+        running = pid_of(name) is not None
+        if (action == "start") != running:
+            return self.send(500, {"error": out or "%s didn't %s" % (name, action), "running": running})
+        return self.send(200, {"output": out, "running": running})
+
+    do_PUT = do_PATCH = do_DELETE = refuse
 
 
 PAGE = r"""<!doctype html>
-<html lang="ko">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Modbus Simulator</title>
 <style>
 :root {
-  --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #6b7385; --line: #e3e6ec;
-  --accent: #2f6fe4; --accent-weak: #e8effd; --ok: #1f9d55; --ok-weak: #e3f5ea; --bad: #d64545;
-  --bad-weak: #fbe9e9; --warn: #b7791f; --warn-weak: #fdf3e1; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  --flash: #fff4b8;
+  /* soft charcoal, off-white text, muted accents: low contrast between surfaces, enough for text */
+  --bg: #1c1e23; --panel: #23262c; --panel-2: #282b32; --line: #2f333b; --line-2: #3a3f48;
+  --text: #d9dce2; --muted: #9399a5; --dim: #6d7380;
+  --blue: #8db0de; --blue-bg: rgba(141,176,222,.12);
+  --amber: #d4b06e; --amber-bg: rgba(212,176,110,.13);
+  --violet: #b4a3d9; --violet-bg: rgba(180,163,217,.13);
+  --teal: #86c3b9; --teal-bg: rgba(134,195,185,.12);
+  --red: #d98c8c; --red-bg: rgba(217,140,140,.13);
+  --green: #8fc9a0; --green-bg: rgba(143,201,160,.13);
+  --off: #7c828e; --off-bg: rgba(124,130,142,.15);
+  --flash: rgba(212,176,110,.16);
+  --shadow: 0 1px 2px rgba(0,0,0,.18);
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", Roboto, sans-serif;
+  color-scheme: dark;
 }
-@media (prefers-color-scheme: dark) {
+@media (prefers-color-scheme: light) {
   :root {
-    --bg: #12151b; --panel: #1a1e26; --text: #e4e7ee; --muted: #8b93a5; --line: #2a303b;
-    --accent: #5b8ff0; --accent-weak: #1e2a42; --ok: #3cc47c; --ok-weak: #15301f; --bad: #f06b6b;
-    --bad-weak: #3a1c1c; --warn: #e0a84a; --warn-weak: #382b14; --flash: #4a4220;
+    /* warm paper instead of stark white */
+    --bg: #f4f2ee; --panel: #fbfaf8; --panel-2: #f1efea; --line: #e4e0d8; --line-2: #d6d1c7;
+    --text: #34373d; --muted: #6e717a; --dim: #9a9ca3;
+    --blue: #4f74a8; --blue-bg: rgba(79,116,168,.09);
+    --amber: #9c7a35; --amber-bg: rgba(176,140,66,.12);
+    --violet: #7a66a8; --violet-bg: rgba(122,102,168,.09);
+    --teal: #4c8a80; --teal-bg: rgba(76,138,128,.09);
+    --red: #b05f5f; --red-bg: rgba(176,95,95,.09);
+    --green: #4f8a5f; --green-bg: rgba(79,138,95,.11);
+    --off: #9a9ca3; --off-bg: rgba(154,156,163,.14);
+    --flash: rgba(176,140,66,.13);
+    --shadow: 0 1px 2px rgba(60,50,30,.06);
+    color-scheme: light;
   }
 }
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--text);
-  font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
-header { display: flex; align-items: center; gap: 12px; padding: 12px 20px; background: var(--panel);
-  border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; flex-wrap: wrap; }
-header h1 { font-size: 16px; margin: 0; font-weight: 650; }
-.muted { color: var(--muted); }
+html, body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 var(--sans); }
+button { font: inherit; color: inherit; }
+.wrap { max-width: 1240px; margin: 0 auto; padding: 0 20px 48px; }
+
+/* top bar */
+header { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
+.bar { max-width: 1240px; margin: 0 auto; padding: 14px 20px; display: flex; align-items: center; gap: 14px; }
+.logo { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center;
+  background: linear-gradient(135deg, var(--blue), var(--violet)); color: #fff; font: 700 13px var(--mono); }
+.brand h1 { margin: 0; font-size: 15px; font-weight: 650; letter-spacing: .1px; }
+.brand p { margin: 0; color: var(--muted); font-size: 12px; }
 .spacer { flex: 1; }
-button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--text);
-  padding: 6px 12px; border-radius: 7px; cursor: pointer; white-space: nowrap; }
-button:hover { border-color: var(--accent); }
-button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-button.danger { color: var(--bad); }
-button.small { padding: 3px 9px; font-size: 12.5px; }
-button:disabled { opacity: .5; cursor: default; }
-.layout { display: grid; grid-template-columns: 290px 1fr; gap: 16px; padding: 16px 20px; max-width: 1500px; margin: 0 auto; }
-@media (max-width: 860px) { .layout { grid-template-columns: 1fr; padding: 12px 16px; } }
-.machines { display: flex; flex-direction: column; gap: 8px; }
-.group-label { font-size: 12px; color: var(--muted); margin: 6px 2px 0; text-transform: uppercase; letter-spacing: .04em; }
-.mcard { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; cursor: pointer; }
-.mcard.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
-.mcard .row1 { display: flex; align-items: center; gap: 8px; }
-.mcard .name { font-weight: 650; }
-.mcard .meta { color: var(--muted); font-size: 12px; margin-top: 3px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
-.dot.on { background: var(--ok); }
-.pill { font-size: 11.5px; padding: 1px 7px; border-radius: 999px; background: var(--line); color: var(--muted); white-space: nowrap; }
-.pill.ok { background: var(--ok-weak); color: var(--ok); }
-.pill.warn { background: var(--warn-weak); color: var(--warn); }
-.pill.bad { background: var(--bad-weak); color: var(--bad); }
-.pill.info { background: var(--accent-weak); color: var(--accent); }
-.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; min-width: 0; }
-.detail-head { padding: 14px 16px; border-bottom: 1px solid var(--line); display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
-.detail-head h2 { margin: 0 0 6px; font-size: 18px; }
-.kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: 13px; margin: 0; }
-.kv dt { color: var(--muted); }
-.kv dd { margin: 0; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-.mono { font-family: var(--mono); font-size: 12.5px; }
-.actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-left: auto; }
-input[type=text], input[type=number], input[type=search], select { font: inherit; padding: 5px 8px; border: 1px solid var(--line);
-  border-radius: 6px; background: var(--bg); color: var(--text); min-width: 0; }
-input:focus, select:focus { outline: 2px solid var(--accent-weak); border-color: var(--accent); }
-.banner { margin: 12px 16px 0; padding: 10px 12px; border-radius: 8px; font-size: 13px; }
-.banner.ok { background: var(--ok-weak); color: var(--ok); }
-.banner.warn { background: var(--warn-weak); color: var(--warn); }
-.toolbar { display: flex; gap: 8px; padding: 12px 16px; align-items: center; flex-wrap: wrap; }
-.tabs { display: flex; gap: 2px; background: var(--bg); padding: 3px; border-radius: 8px; flex-wrap: wrap; }
-.tabs button { border: 0; background: transparent; padding: 5px 12px; border-radius: 6px; }
-.tabs button.sel { background: var(--panel); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
-.tablewrap { overflow-x: auto; }
-table { border-collapse: collapse; width: 100%; }
-th, td { text-align: left; padding: 7px 10px; border-top: 1px solid var(--line); vertical-align: middle; }
-th { font-size: 12px; color: var(--muted); font-weight: 600; background: var(--panel); }
-td.val { min-width: 220px; }
-td.num { text-align: right; font-variant-numeric: tabular-nums; }
-tr.pending td { color: var(--muted); }
-tr.changed td.val { animation: flash 1.6s ease-out; }
-@keyframes flash { from { background: var(--flash); } to { background: transparent; } }
-.edit { display: flex; gap: 6px; align-items: center; }
-.edit input { width: 150px; }
-.hint { color: var(--muted); font-size: 12px; }
-.switch { position: relative; width: 40px; height: 22px; border-radius: 11px; background: var(--line); border: 0; padding: 0; flex: none; }
-.switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: left .12s; box-shadow: 0 1px 2px rgba(0,0,0,.3); }
-.switch.on { background: var(--ok); }
-.switch.on.alarm { background: var(--bad); }
-.switch.on::after { left: 21px; }
-.raw { color: var(--muted); font-family: var(--mono); font-size: 11.5px; }
-.section { border-top: 1px solid var(--line); padding: 12px 16px; }
-.section h3 { margin: 0 0 8px; font-size: 14px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-.controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 16px 24px; }
-.controls > div { min-width: 0; }
-.sched { width: auto; }
-.sched select, .sched input { max-width: 100%; }
-.ctl-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 6px 0; font-size: 13px; }
-.ctl-row input[type=number] { width: 90px; }
-.ctl-row input.wide { width: 150px; }
-.sched td, .sched th { padding: 5px 8px; font-size: 13px; }
-.log { margin: 0; padding: 10px 12px; font-family: var(--mono); font-size: 12px; line-height: 1.5; max-height: 360px; overflow: auto;
-  white-space: pre-wrap; word-break: break-all; background: var(--bg); border-radius: 8px; }
-.log .w { color: var(--accent); } .log .e { color: var(--bad); } .log .c { color: var(--muted); } .log .d { color: var(--warn); }
-.empty { padding: 40px; text-align: center; color: var(--muted); }
-.mcard.project { border-style: dashed; }
-a { color: var(--accent); }
-.mcard.project.sel { border-style: solid; }
-.steps { margin: 0; padding: 12px 16px 4px 34px; font-size: 13.5px; }
-.steps li { margin: 0 0 6px; }
-.expected { font-weight: 650; font-variant-numeric: tabular-nums; }
-.portcard { border: 1px solid var(--line); border-radius: 10px; margin: 0 16px 14px; overflow: hidden; }
-.porthead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; background: var(--bg);
-  border-bottom: 1px solid var(--line); }
-.portname { font-size: 17px; font-weight: 700; letter-spacing: .01em; }
-.devhead { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 9px 14px 7px; border-top: 1px solid var(--line); }
-.portcard .devhead:first-of-type { border-top: 0; }
-.devname { font-weight: 650; }
-.devhead::before { content: ""; width: 3px; align-self: stretch; background: var(--accent); border-radius: 2px; }
-.dptable td:first-child, .dptable th:first-child { padding-left: 26px; }
-.dptable th { background: transparent; }
-.dptable { table-layout: fixed; min-width: 860px; }
-.dptable td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg);
-  padding: 8px 14px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 90vw; z-index: 10; }
-#toast.show { opacity: 1; }
-#toast.err { background: var(--bad); color: #fff; }
+.live { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+.pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 0 var(--green);
+  animation: pulse 2s infinite; }
+.live.paused .pulse, .live.down .pulse { animation: none; background: var(--off); }
+.live.down .pulse { background: var(--red); }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--green) 55%, transparent); }
+  70% { box-shadow: 0 0 0 7px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+.btn { border: 1px solid var(--line-2); background: var(--panel); border-radius: 8px; padding: 6px 11px; cursor: pointer;
+  font-size: 12px; color: var(--muted); }
+.btn:hover { color: var(--text); border-color: var(--dim); }
+
+/* port tabs */
+.tabs { display: flex; gap: 8px; flex-wrap: wrap; margin: 22px 0 18px; }
+.tab { display: flex; align-items: center; gap: 10px; padding: 9px 14px; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--panel); text-align: left; }
+.tab:hover { border-color: var(--line-2); }
+.tab.on { border-color: var(--blue); background: var(--blue-bg); }
+.tab b { font-weight: 650; font-size: 13px; }
+.tab small { display: block; color: var(--muted); font-size: 11px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--off); }
+.dot.ok { background: var(--green); } .dot.idle { background: var(--amber); } .dot.bad { background: var(--red); }
+
+/* port header */
+.port { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 24px; margin-bottom: 14px; }
+.port h2 { margin: 0; font-size: 20px; font-weight: 650; }
+.port .sub { color: var(--muted); font-size: 13px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
+.mono { font-family: var(--mono); }
+.path { font: 12px var(--mono); color: var(--text); background: var(--panel-2); border: 1px solid var(--line);
+  padding: 3px 8px; border-radius: 6px; cursor: copy; }
+.path:hover { border-color: var(--line-2); }
+.ctl { margin-left: auto; }
+.act { font: 600 13px var(--sans); border-radius: 9px; padding: 8px 16px; cursor: pointer; border: 1px solid; }
+.act.stop { color: var(--red); background: var(--red-bg); border-color: color-mix(in srgb, var(--red) 40%, transparent); }
+.act.stop:hover { background: color-mix(in srgb, var(--red) 22%, transparent); }
+.act.start { color: #fff; background: var(--green); border-color: var(--green); }
+.act.start:hover { filter: brightness(1.08); }
+.act:disabled { opacity: .6; cursor: wait; }
+.notice { border: 1px solid var(--line); background: var(--panel); border-radius: 10px; padding: 12px 14px;
+  margin-bottom: 14px; color: var(--muted); }
+.notice.warn { border-color: color-mix(in srgb, var(--amber) 45%, var(--line)); background: var(--amber-bg); color: var(--text); }
+.notice.bad { border-color: color-mix(in srgb, var(--red) 45%, var(--line)); background: var(--red-bg); color: var(--text); }
+.notice code { font: 12px var(--mono); background: var(--panel-2); padding: 1px 6px; border-radius: 5px; }
+
+/* section titles */
+.sec { display: flex; align-items: baseline; gap: 10px; margin: 26px 0 10px; }
+.sec h3 { margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: .9px; color: var(--muted); font-weight: 650; }
+.sec span { color: var(--dim); font-size: 12px; }
+
+/* DP cards */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.dev + .dev { margin-top: 18px; }
+.devh { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; padding: 8px 12px; border-radius: 10px; cursor: pointer;
+  border: 1px dashed var(--line-2); }
+.devh:hover { border-color: var(--dim); } .devh.on { border-style: solid; border-color: var(--blue); background: var(--blue-bg); }
+.devh b { font-size: 14px; font-weight: 650; }
+.slave { font: 700 11px var(--mono); color: var(--violet); background: var(--violet-bg); padding: 2px 8px; border-radius: 6px; }
+.devm { margin-left: auto; display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+.sl { font: 700 10px var(--mono); color: var(--violet); background: var(--violet-bg); padding: 1px 5px; border-radius: 4px; margin-right: 6px; }
+.card { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  padding: 14px 16px 12px; cursor: pointer; transition: border-color .15s, transform .15s; }
+.card:hover { border-color: var(--line-2); }
+.card.focus { border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-bg); }
+.card.flash { animation: flash 1.6s ease-out; }
+@keyframes flash { 0% { background: var(--flash); } 100% { background: var(--panel); } }
+.card .top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.card .name { font: 650 15px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card .where { font: 12px var(--mono); color: var(--muted); white-space: nowrap; }
+.card .val { margin: 10px 0 6px; font: 600 30px/1.1 var(--mono); letter-spacing: -.5px; word-break: break-all; }
+.card .val.str { font-size: 20px; }
+.card .val.none { color: var(--dim); font-size: 18px; font-weight: 500; }
+.bool { display: inline-flex; align-items: center; gap: 10px; }
+.bool i { font-style: normal; font: 600 11px var(--sans); text-transform: uppercase; letter-spacing: .8px;
+  padding: 3px 8px; border-radius: 999px; }
+.bool.on { color: var(--green); } .bool.on i { background: var(--green-bg); }
+.bool.off { color: var(--off); } .bool.off i { background: var(--off-bg); }
+.card .meta { display: flex; flex-wrap: wrap; gap: 4px 10px; color: var(--muted); font-size: 12px; }
+.card .iot { margin-top: 8px; font-size: 12px; color: var(--muted); }
+.card .iot b { color: var(--text); font: 600 12px var(--mono); }
+.card .foot { display: flex; justify-content: space-between; gap: 8px; margin-top: 10px; padding-top: 10px;
+  border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+.card .foot span { display: flex; align-items: center; gap: 6px; }
+.w-pill { color: var(--amber); background: var(--amber-bg); padding: 1px 8px; border-radius: 999px; font-weight: 600; }
+
+/* log */
+.logbox { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.logbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line);
+  background: var(--panel-2); }
+.seg { display: inline-flex; border: 1px solid var(--line-2); border-radius: 8px; overflow: hidden; }
+.seg button { border: 0; background: transparent; padding: 5px 11px; font-size: 12px; color: var(--muted); cursor: pointer; }
+.seg button.on { background: var(--blue-bg); color: var(--blue); font-weight: 600; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font: 600 12px var(--mono); color: var(--blue);
+  background: var(--blue-bg); border-radius: 999px; padding: 3px 6px 3px 10px; }
+.chip button { border: 0; background: transparent; color: inherit; cursor: pointer; padding: 0 4px; font-size: 14px; line-height: 1; }
+.legend { display: flex; gap: 12px; margin-left: auto; font-size: 11px; color: var(--muted); flex-wrap: wrap; }
+.legend span { display: flex; align-items: center; gap: 5px; }
+.legend i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+.rows { max-height: 560px; overflow: auto; font: 13px/1.35 var(--mono); }
+.row { display: grid; grid-template-columns: 96px 66px minmax(110px, 1.1fr) minmax(90px, 1fr) 104px minmax(96px, .8fr) minmax(0, 1.4fr);
+  gap: 10px; align-items: center; padding: 7px 14px; border-bottom: 1px solid var(--line); }
+.row:last-child { border-bottom: 0; }
+.row:hover { background: var(--panel-2); }
+.row.new { animation: newrow 1.4s ease-out; }
+@keyframes newrow { from { background: var(--blue-bg); } to { background: transparent; } }
+.t { color: var(--dim); font-size: 12px; }
+.verb { justify-self: start; font: 700 10.5px var(--sans); letter-spacing: .7px; padding: 3px 7px; border-radius: 5px; }
+.verb.READ { color: var(--blue); background: var(--blue-bg); }
+.verb.WRITE { color: var(--amber); background: var(--amber-bg); }
+.verb.SET { color: var(--violet); background: var(--violet-bg); }
+.verb.RESET { color: var(--red); background: var(--red-bg); }
+.dpn { font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.dpn:hover { color: var(--blue); }
+.dpn.nodp { color: var(--red); font-weight: 500; cursor: default; }
+.v { font-weight: 650; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.v.on { color: var(--green); } .v.off { color: var(--off); } .v.str { color: var(--teal); }
+.v small { color: var(--dim); font-weight: 400; font-size: 12px; }
+.by { justify-self: start; font: 600 11px var(--sans); padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.by.ptcsw, .by.master { color: var(--blue); background: var(--blue-bg); }
+.by.schedule { color: var(--violet); background: var(--violet-bg); }
+.by.manual { color: var(--teal); background: var(--teal-bg); }
+.by.auto-reset { color: var(--red); background: var(--red-bg); }
+.addr { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.note { color: var(--dim); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.note b { color: var(--amber); font-weight: 600; }
+.ev { display: grid; grid-template-columns: 96px 1fr; gap: 10px; padding: 7px 14px; border-bottom: 1px solid var(--line);
+  color: var(--muted); font-size: 12px; }
+.ev.bad { color: var(--red); background: var(--red-bg); }
+.ev.warn { color: var(--amber); }
+.ev.old { color: var(--dim); }
+.empty { padding: 28px; text-align: center; color: var(--muted); font-family: var(--sans); }
+.more { position: sticky; top: 0; z-index: 2; display: none; justify-content: center; padding: 6px; }
+.more button { border: 0; border-radius: 999px; padding: 4px 12px; background: var(--blue); color: #fff; font-size: 12px; cursor: pointer; }
+.more.show { display: flex; }
+footer { margin-top: 26px; color: var(--dim); font-size: 12px; text-align: center; }
+footer code { font: 12px var(--mono); }
+.toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg);
+  padding: 7px 14px; border-radius: 8px; font-size: 12px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+.toast.show { opacity: 1; }
+.path { overflow-wrap: anywhere; max-width: 100%; }
+.port > div, .port .sub { min-width: 0; }
+@media (max-width: 860px) {
+  .row { grid-template-columns: 70px 54px minmax(0, 1fr) minmax(0, 1fr); gap: 8px; padding: 7px 10px; }
+  .row .t, .ev .t { font-size: 11px; }
+  .row .by, .row .addr, .row .note { display: none; }
+  .legend { display: none; }
+  .ev { grid-template-columns: 70px 1fr; padding: 7px 10px; }
+}
+@media (max-width: 520px) {
+  .wrap, .bar { padding-left: 16px; padding-right: 16px; }
+  .brand p, #liveText { display: none; }
+  .cards { grid-template-columns: 1fr; }
+  .row .t { font-size: 10.5px; }
+}
+
+/* easy on the eyes: lighter weights, more air, quieter badges and borders */
+html, body { font-size: 14.5px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
+.wrap { padding-bottom: 64px; }
+.logo { background: var(--panel-2); color: var(--muted); border: 1px solid var(--line-2); font-weight: 600; }
+.brand h1 { font-weight: 600; }
+.tabs { margin: 28px 0 22px; gap: 10px; }
+.tab { padding: 10px 16px; border-color: transparent; background: var(--panel); box-shadow: var(--shadow); }
+.tab.on { border-color: color-mix(in srgb, var(--blue) 45%, transparent); }
+.tab b, .port h2, .card .name, .dpn, .devh b { font-weight: 600; }
+.sec { margin: 34px 0 12px; }
+.sec h3 { font-weight: 600; letter-spacing: .6px; }
+.cards { gap: 14px; }
+.card { border-color: transparent; box-shadow: var(--shadow); padding: 16px 18px 14px; border-radius: 14px; }
+.card:hover { border-color: var(--line-2); }
+.card .val { font-weight: 500; font-size: 28px; color: var(--text); }
+.card .foot { border-top-color: var(--line); }
+.bool i { font-weight: 600; letter-spacing: .5px; }
+.devh { border-style: solid; border-color: transparent; background: var(--panel-2); }
+.devh:hover { border-color: var(--line-2); }
+.logbox { border-color: transparent; box-shadow: var(--shadow); border-radius: 14px; }
+.logbar { background: var(--panel); border-bottom-color: var(--line); padding: 12px 14px; }
+.seg { border-color: var(--line); }
+.rows { font-size: 13px; }
+.row { padding: 9px 16px; border-bottom-color: color-mix(in srgb, var(--line) 60%, transparent); }
+.verb { font-weight: 600; background: transparent !important; padding: 2px 0; letter-spacing: .6px; }
+.verb::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 7px;
+  vertical-align: 1px; background: currentColor; }
+.v { font-weight: 500; }
+.by { font-weight: 500; background: transparent !important; padding: 0; }
+.slave, .sl { font-weight: 600; }
+.note b { font-weight: 500; }
+.act { font-weight: 500; }
+.act.start { color: var(--bg); }
+.notice { border-color: transparent; box-shadow: var(--shadow); }
+.path { background: var(--panel-2); border-color: transparent; }
+footer { margin-top: 34px; }
 </style>
 </head>
 <body>
-<header>
-  <h1>Modbus Simulator</h1>
-  <span class="muted" id="host"></span>
-  <span class="spacer"></span>
-  <button class="primary" onclick="act('all','start')">Start all</button>
-  <button class="danger" onclick="act('all','stop')">Stop all</button>
-</header>
-<div class="layout">
-  <div class="machines" id="machines"></div>
-  <div class="panel" id="detail">
-    <div id="head"><div class="empty">Loading…</div></div>
-    <div id="body"></div>
-    <div class="section" id="controls"></div>
-    <div class="section" id="logsec"><h3>Request log
-      <label class="muted" style="font-size:13px;font-weight:400"><input type="checkbox" id="quiet" checked onchange="loadLog()"> hide connect/disconnect</label>
-      <label class="muted" style="font-size:13px;font-weight:400"><input type="checkbox" id="live" checked> live</label>
-      <label class="muted" style="font-size:13px;font-weight:400"><input type="checkbox" id="wonly" onchange="loadLog()"> writes, resets and silence only</label></h3>
-      <pre class="log" id="log"></pre></div>
+<header><div class="bar">
+  <div class="logo">MB</div>
+  <div class="brand"><h1>Modbus Simulator</h1><p>Live monitor · configure from the terminal</p></div>
+  <div class="spacer"></div>
+  <div class="live" id="live"><span class="pulse"></span><span id="liveText">Connecting…</span></div>
+  <button class="btn" id="pause" title="Freeze the screen to read it">Pause</button>
+</div></header>
+
+<div class="wrap">
+  <nav class="tabs" id="tabs"></nav>
+  <div id="port"></div>
+
+  <div class="sec"><h3>Data points</h3><span id="dpCount"></span></div>
+  <div id="cards"></div>
+
+  <div class="sec"><h3>Live log</h3><span>newest first · click a DP to follow it</span></div>
+  <div class="logbox">
+    <div class="logbar">
+      <div class="seg" id="mode">
+        <button data-m="all" class="on">Everything</button>
+        <button data-m="changes">Changes only</button>
+        <button data-m="reads">Reads only</button>
+      </div>
+      <div class="seg" id="slaveSeg" style="display:none"></div>
+      <span id="focusChip"></span>
+      <div class="legend">
+        <span><i style="background:var(--blue)"></i>READ · ptcsw read it</span>
+        <span><i style="background:var(--amber)"></i>WRITE · ptcsw wrote it</span>
+        <span><i style="background:var(--violet)"></i>SET · changed in the simulator</span>
+        <span><i style="background:var(--red)"></i>RESET · auto-reset to 0</span>
+      </div>
+    </div>
+    <div class="rows" id="rows"><div class="more" id="more"><button>New activity ↑</button></div><div id="list"></div></div>
   </div>
+
+  <footer>Only Start/Stop works here. To change values, delays or schedules, use the terminal:
+    <code>./run.sh status</code> · <code>python3 modbus_client.py set com1 dp81=0</code></footer>
 </div>
-<div id="toast"></div>
+<div class="toast" id="toast"></div>
+
 <script>
 const $ = s => document.querySelector(s);
-const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-const store = { get(k, d) { try { return localStorage.getItem(k) ?? d; } catch (e) { return d; } },
-                set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
-const PROJECT = "__project__";
-let project = null;
-let machines = [], sel = new URLSearchParams(location.search).get("m") || store.get("sel", PROJECT), tab = store.get("tab", "all"), unitSel = {}, filter = "";
-let detail = null, prev = {}, controlsFor = null, draft = null, controlsSilent = false;
-$("#host").textContent = location.host;
+const esc = s => String(s).replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+let ports = [], sel = null, focus = null, mode = "all", paused = false, slaveF = null, multi = false;
+let lastVals = {}, seenLines = new Set(), firstLog = true, lastOk = 0;
 
-function toast(msg, err) {
-  const t = $("#toast"); t.textContent = msg; t.className = "show" + (err ? " err" : "");
-  clearTimeout(t._h); t._h = setTimeout(() => t.className = "", err ? 6000 : 2400);
+try { sel = localStorage.getItem("sel"); mode = localStorage.getItem("mode") || "all"; } catch (e) {}
+if (location.hash.length > 1) sel = decodeURIComponent(location.hash.slice(1));  // e.g. #com3 opens that port
+document.querySelectorAll("#mode button").forEach(b => b.classList.toggle("on", b.dataset.m === mode));
+
+function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 1600); }
+function ago(s) { if (s == null) return "never"; if (s < 1) return "just now"; if (s < 60) return s.toFixed(s < 10 ? 1 : 0) + " s ago"; if (s < 3600) return Math.round(s / 60) + " min ago"; return Math.round(s / 3600) + " h ago"; }
+function where(d) { return d.pending ? "no address" : d.table + " " + d.addr + (d.bit != null ? " bit " + d.bit : ""); }
+function fmt(v, type) {
+  if (v === undefined || v === null) return null;
+  if (typeof v === "number" && type === "FLOAT32") return String(+v.toPrecision(7));
+  return typeof v === "string" ? '"' + v + '"' : String(v);
 }
-async function api(path, body) {
-  const r = await fetch(path, body === undefined ? {} : {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
-  const j = await r.json().catch(() => ({error: "bad reply"}));
-  if (!r.ok) throw new Error(j.error || r.statusText);
-  return j;
-}
-function ago(s) { return s < 60 ? Math.round(s) + "s ago" : s < 3600 ? Math.round(s / 60) + " min ago" : Math.round(s / 3600) + " h ago"; }
-function pollPill(m) {
-  if (!m.running) return '<span class="pill">stopped</span>';
-  if (!m.poll) return '<span class="pill warn">no reads yet</span>';
-  return `<span class="pill ${m.poll.ago < 30 ? "ok" : "warn"}" title="last read from ${esc(m.poll.peer)}">read ${ago(m.poll.ago)}</span>`;
-}
-function delayText(d) {
-  if (!d) return "";
-  const parts = [];
-  if (d.cycle) parts.push(d.cycle.ms.join("↔") + " ms / " + d.cycle.every_s + "s");
-  else if (d.default) parts.push(d.default + " ms");
-  if (d.unit && Object.keys(d.unit).length) parts.push("per unit");
-  if (d.fc && Object.keys(d.fc).length) parts.push("per FC");
-  return parts.join(", ");
-}
-function silentLeft(m) { return m.silent_until ? m.silent_until - m.now : 0; }
-function endpointShort(m) {
-  if (m.kind === "pty") return (m.studio_port || "serial") + " · pty";
-  return "tcp " + m.port;
+function isBool(type) { return type === "BOOL" || type === "BIT"; }
+function portState(p) {
+  if (p.error) return ["bad", "Config error"];
+  if (!p.running) return ["bad", "Stopped"];
+  if (p.silent_left) return ["idle", "Silent " + p.silent_left + " s"];
+  if (p.poll && p.poll.ago < 30) return ["ok", "ptcsw reading"];
+  return ["idle", p.poll ? "Last read " + ago(p.poll.ago) : "Not read yet"];
 }
 
-function renderMachines() {
-  const pr = project && project.name;
-  const projectCard = `<div class="mcard project ${sel === PROJECT ? "sel" : ""}" onclick="pick(PROJECT)">
-      <div class="row1"><span class="name">Studio project</span></div>
-      <div class="meta">${pr ? esc(project.name) : "load one to start"}</div></div>`;
-  const groups = [["Serial (pty)", machines.filter(m => m.kind === "pty")], ["TCP", machines.filter(m => m.kind !== "pty")]];
-  $("#machines").innerHTML = groups.filter(g => g[1].length).map(([label, ms]) => `<div class="group-label">${label}</div>` + ms.map(m => `
-    <div class="mcard ${m.name === sel ? "sel" : ""}" onclick="pick('${m.name}')">
-      <div class="row1"><span class="dot ${m.running ? "on" : ""}"></span><span class="name">${esc(m.name)}</span>
-        <span class="muted">${esc(m.title)}</span></div>
-      <div class="meta">${m.error ? `<span class="pill bad">${esc(m.error)}</span>` : `${esc(endpointShort(m))} · unit ${m.devices.map(d => d.unit).join(", ")} ${pollPill(m)}
-        ${delayText(m.delay) ? `<span class="pill warn">delay ${esc(delayText(m.delay))}</span>` : ""}
-        ${m.schedules && m.schedules.length ? `<span class="pill info">${m.schedules.length} schedule${m.schedules.length > 1 ? "s" : ""}</span>` : ""}
-        ${m.resets && m.resets.length ? `<span class="pill info">auto-reset</span>` : ""}
-        ${silentLeft(m) > 0 ? `<span class="pill bad">silent ${Math.ceil(silentLeft(m))}s</span>` : ""}`}</div>
-    </div>`).join("")).join("");
-  $("#machines").insertAdjacentHTML("afterbegin", projectCard);
-}
-function pick(name) { if (name === PROJECT) $("#head").innerHTML = ""; sel = name; store.set("sel", name); prev = {}; controlsFor = null; renderMachines(); refresh(); }
+async function api(u) { const r = await fetch(u, {cache: "no-store"}); if (!r.ok) throw new Error((await r.json()).error || r.statusText); return r.json(); }
 
-function copy(text) {
-  (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).then(() => toast("Copied " + text), () => toast(text));
+function renderTabs() {
+  $("#tabs").innerHTML = ports.map(p => {
+    const [cls, txt] = portState(p);
+    return `<button class="tab ${p.name === sel ? "on" : ""}" data-n="${esc(p.name)}"><span class="dot ${cls}"></span>
+      <span><b>${esc(p.port)}</b><small>${esc(txt)} · ${p.dps.length} DP${p.dps.length === 1 ? "" : "s"}</small></span></button>`;
+  }).join("") || "";
+  document.querySelectorAll(".tab").forEach(b => b.onclick = () => select(b.dataset.n));
 }
 
-function renderHead(m) {
-  const rp = m.real_plc;
-  const ep = m.kind === "pty"
-    ? `<dt>Serial port</dt><dd><span class="mono">${esc(m.link)}</span><button class="small" onclick="copy('${esc(m.link)}')">Copy</button>
-        <span class="hint">→ application.json ${esc(m.application_json || "")} (set it in IoTLink, or a cloud deploy puts /dev/ttyAMA* back)</span></dd>
-       <dt>Framing</dt><dd>${esc((m.framing || "auto").toUpperCase())}, any baud/parity (a pty ignores them)</dd>`
-    : `<dt>Endpoint</dt><dd class="mono">127.0.0.1:${m.port} (or this PortaCON's IP)</dd>
-       <dt>Framing</dt><dd>${esc(m.framing ? m.framing.toUpperCase() : "Modbus TCP, RTU or ASCII, detected per connection")}</dd>`;
-  $("#head").innerHTML = `<div class="detail-head">
-    <div style="min-width:0">
-      <h2>${esc(m.title)} <span class="muted" style="font-weight:400">${esc(m.name)}</span></h2>
-      <dl class="kv">${ep}
-        <dt>Devices</dt><dd>${m.devices.map(d => `slave ${d.unit}${d.name ? " · " + esc(d.name) : ""}`).join("; ")}</dd>
-        ${rp ? `<dt>Real PLC</dt><dd>${esc(rp.make || "")} <span class="mono">${esc(rp.ip || "")}:${esc(rp.port || "")}</span> ${esc(rp.connection || "")}</dd>` : ""}
-        ${m.running ? `<dt>Process</dt><dd class="mono">pid ${m.pid}, control port 127.0.0.1:${m.control_port}</dd>` : ""}
-      </dl>
-    </div>
-    <div class="actions">
-      ${m.running
-        ? `<button onclick="act(sel,'start')" title="Restart the process; values and write counts are kept">Restart</button>
-           <button class="danger" onclick="act(sel,'stop')">Stop</button>`
-        : `<button class="primary" onclick="act(sel,'start')">Start</button>`}
-      <button onclick="act(sel,'reset')" title="Back to the file's starting values, write counts zeroed">Reset values</button>
-      <button ${m.running ? "" : "disabled"} onclick="resetCounts()">Reset write counts</button>
-    </div>
-  </div>`;
+function renderPort(p) {
+  const [cls, txt] = portState(p);
+  const ep = p.kind === "pty" ? `<span class="path" title="Click to copy" data-copy="${esc(p.link)}">${esc(p.link)}</span>`
+                              : `<span class="mono">TCP port ${esc(p.tcp)}</span>`;
+  let notice = "";
+  if (p.error) notice = `<div class="notice bad">This simulator's file has an error: ${esc(p.error)}</div>`;
+  else if (!p.running) notice = `<div class="notice bad"><b>${esc(p.name)} is stopped</b>, so ptcsw gets no answers on this port. Use <b>Start</b> above when you want it back.</div>`;
+  else if (p.silent_left) notice = `<div class="notice warn">Simulating a dead device: no replies for another ${p.silent_left} s.</div>`;
+  else if (!p.poll) notice = `<div class="notice">Waiting for ptcsw. If nothing arrives, check that 포트 경로 for ${esc(p.port)} in Porta Studio is exactly the path above.</div>`;
+  const devList = [...new Map(p.dps.map(d => [d.unit, d.device])).entries()];
+  const devs = devList.length === 1 ? `slave ${devList[0][0]} · ${devList[0][1]}`
+             : devList.length ? `${devList.length} devices · slaves ${devList.map(x => x[0]).join(", ")}` : "";
+  $("#port").innerHTML = `<div class="port"><div><h2>${esc(p.port)}${devs ? ` <span style="color:var(--muted);font-weight:500;font-size:15px">${esc(devs)}</span>` : ""}</h2></div>
+    <div class="sub"><span><span class="dot ${cls}" style="display:inline-block;margin-right:6px"></span>${esc(txt)}</span>${ep}
+    ${p.framing ? `<span>${esc(String(p.framing).toUpperCase())}</span>` : ""}</div>
+    ${p.error ? "" : `<div class="ctl">${p.running
+      ? `<button class="act stop" id="simBtn" data-a="stop">■ Stop ${esc(p.port)}</button>`
+      : `<button class="act start" id="simBtn" data-a="start">▶ Start ${esc(p.port)}</button>`}</div>`}</div>${notice}`;
+  const b = $("#simBtn"); if (b) b.onclick = () => simAction(p, b.dataset.a, b);
+  document.querySelectorAll("[data-copy]").forEach(e => e.onclick = () => { navigator.clipboard && navigator.clipboard.writeText(e.dataset.copy); toast("Path copied"); });
 }
 
-function addr(t) { return t.pending ? t.table + " —" : t.table + " " + t.addr + (t.type === "BIT" ? "." + t.bit : ""); }
-function valueCell(t, m, ui) {
-  if (t.pending) return `<span title="${esc(t.note)}">no Modbus address yet — set "addr" in the machine file</span>`;
-  if (!m.running) return `<span class="raw">start: ${esc(t.start ?? "")}</span>`;
-  if (t.error) return `<span class="pill bad">${esc(t.error)}</span>`;
-  if (t.type === "BOOL" || t.type === "BIT") {
-    const on = Number(t.value) === 1;
-    return `<div class="edit"><button class="switch ${on ? "on" : ""} ${t.group === "alarm" ? "alarm" : ""}"
-      onclick="setTag(${ui}, ${on ? 0 : 1})" aria-label="toggle"></button><span>${on ? "1" : "0"}</span></div>`;
-  }
-  const isStr = t.type === "STRING";
-  return `<div class="edit"><input data-ui="${ui}" type="text" value="${esc(t.value)}" ${isStr ? `maxlength="${t.words * 2}"` : 'inputmode="decimal"'}
-      onkeydown="if(event.key==='Enter'){setTag(${ui}, this.value);this.blur()} if(event.key==='Escape'){this.value=rows[${ui}].value;this.blur()}">
-    ${isStr ? `<span class="hint">max ${t.words * 2}</span>` : ""}</div>`;
-}
-
-let rows = [];
-function renderBody(d) {
-  const m = d.machine;
-  const devs = d.devices;
-  let unit = unitSel[m.name];
-  if (!devs.some(x => x.unit === unit)) unit = devs[0]?.unit;
-  unitSel[m.name] = unit;
-  const dev = devs.find(x => x.unit === unit) || {tags: [], other_writes: {}};
-  rows = dev.tags;
-  const groups = [...new Set(rows.map(t => t.group).filter(Boolean))];
-  if (tab !== "all" && !groups.includes(tab)) tab = "all";
-  const alarmsOn = rows.filter(t => t.group === "alarm" && Number(t.value) === 1).length;
-  const shown = rows.map((t, i) => [t, i]).filter(([t]) => (tab === "all" || t.group === tab) &&
-    (!filter || (t.tag + " " + t.plc + " " + addr(t)).toLowerCase().includes(filter.toLowerCase())));
-  const target = m.kind === "pty" ? `<span class="mono">${esc(m.link)}</span>` : `<span class="mono">127.0.0.1:${m.port}</span>`;
-  const banner = !m.running
-    ? `<div class="banner warn">${esc(m.name)} is stopped. Start it to serve ${m.kind === "pty" ? "the serial port" : "port " + m.port}.</div>`
-    : m.poll ? `<div class="banner ${m.poll.ago < 30 ? "ok" : "warn"}">Last read ${ago(m.poll.ago)} from <span class="mono">${esc(m.poll.peer)}</span> (${esc(m.poll.framing)}, unit ${m.poll.unit}).</div>`
-    : `<div class="banner warn">Running, but no master has read from it yet. Point the device at ${target}${m.kind === "pty" ? "" : ", unit " + devs.map(x => x.unit).join("/")}.</div>`;
-  const totalWrites = rows.reduce((a, t) => a + (t.writes || 0), 0) + Object.values(dev.other_writes || {}).reduce((a, b) => a + b, 0);
-  const other = Object.entries(dev.other_writes || {});
-  const unknown = Object.entries(d.unknown_unit_writes || {});
-  const focused = document.activeElement;
-  const keep = focused && focused.dataset && focused.dataset.ui !== undefined ? {ui: focused.dataset.ui, value: focused.value, s: focused.selectionStart} : null;
-  $("#body").innerHTML = `${banner}
-    <div class="toolbar">
-      ${devs.length > 1 ? `<div class="tabs">${devs.map(x => `<button class="${x.unit === unit ? "sel" : ""}" onclick="unitSel['${m.name}']=${x.unit};prev={};refresh()">slave ${x.unit}${x.name ? " · " + esc(x.name) : ""}</button>`).join("")}</div>` : ""}
-      ${groups.length ? `<div class="tabs">${["all", ...groups].map(g => `<button class="${tab === g ? "sel" : ""}" onclick="setTab('${g}')">${
-        g === "all" ? "All" : g === "alarm" ? "Alarms" : g === "data" ? "Data" : esc(g)} <span class="pill ${g === "alarm" && alarmsOn ? "bad" : ""}">${
-        g === "all" ? rows.length : g === "alarm" && alarmsOn ? alarmsOn + " on" : rows.filter(t => t.group === g).length}</span></button>`).join("")}</div>` : ""}
-      <input type="search" id="filter" placeholder="Filter tags or addresses" value="${esc(filter)}" oninput="filter=this.value;renderBody(detail)">
-      <span class="spacer"></span>
-      <span class="muted" style="font-size:13px">master writes: <b>${totalWrites}</b></span>
-      ${groups.includes("alarm") ? `<button ${m.running ? "" : "disabled"} onclick="allAlarms()">All alarms off</button>` : ""}
-    </div>
-    <div class="tablewrap"><table>
-      <thead><tr><th>Tag</th><th>${rows.some(t => t.plc) ? "PLC address" : "Studio"}</th><th>Modbus</th><th>Type</th><th>Value</th><th class="num" title="Writes from the master (ptcsw) since the last reset">Writes</th><th>Registers</th></tr></thead>
-      <tbody>${shown.map(([t, i]) => {
-        const key = unit + "/" + t.tag, val = JSON.stringify(t.value) + "/" + t.writes;
-        const changed = prev[key] !== undefined && prev[key] !== val; prev[key] = val;
-        const studio = t.plc || [t.word_order && t.words === 2 ? t.word_order + " word order" : "", t.expression ? "expr " + t.expression : ""].filter(Boolean).join(", ");
-        return `<tr class="${t.pending ? "pending" : ""} ${changed ? "changed" : ""}" title="${esc(t.note)}">
-          <td>${esc(t.tag)}</td><td class="mono">${esc(studio)}</td><td class="mono">${esc(addr(t))}</td>
-          <td class="mono">${esc(t.type)}${t.type === "STRING" ? " ×" + t.words : ""}</td>
-          <td class="val">${valueCell(t, m, i)}</td>
-          <td class="num">${t.writes ? `<span class="pill ${t.writes > 1 ? "warn" : "info"}">${t.writes}</span>` : '<span class="muted">0</span>'}</td>
-          <td class="raw">${esc(t.raw || "")}</td></tr>`;
-      }).join("") || `<tr><td colspan="7" class="empty">No tags match.</td></tr>`}</tbody>
-    </table></div>
-    ${other.length || unknown.length ? `<div class="section"><h3>Writes to addresses without a tag</h3><div class="mono" style="font-size:12.5px">${
-      other.map(([k, n]) => `slave ${unit} ${esc(k)}: ${n}`).concat(unknown.flatMap(([u, c]) => Object.entries(c).map(([k, n]) => `slave ${u} (no device) ${esc(k)}: ${n}`))).join("<br>")}</div></div>` : ""}`;
-  if (keep) {
-    const el = document.querySelector(`[data-ui="${keep.ui}"]`);
-    if (el) { el.value = keep.value; el.focus(); try { el.setSelectionRange(keep.s, keep.s); } catch (e) {} }
-  }
-  if (document.activeElement?.id !== "filter" && focused?.id === "filter") {
-    const f = $("#filter"); f.focus(); f.setSelectionRange(f.value.length, f.value.length);
-  }
-}
-
-function renderControls(d) {
-  const m = d.machine, dl = m.delay || {};
-  if (!draft || !draft.resets) draft = Object.assign(draft || {}, { resets: (m.resets || []).map(r => ({...r})) });
-  if (!draft.sched) draft.sched = (m.schedules || []).slice(0, m.schedules.length - m.file_schedules)
-    .map(s => ({...s, values: (s.values || []).join(", ")}));
-  const tagOpts = (unit, cur) => (d.devices.find(x => x.unit === Number(unit)) || d.devices[0] || {tags: []}).tags
-    .filter(t => !t.pending).map(t => `<option ${t.tag === cur ? "selected" : ""}>${esc(t.tag)}</option>`).join("");
-  $("#controls").innerHTML = `<div class="controls">
-    <div>
-      <h3>Reply delay <span class="hint" style="font-weight:400">re-read within 0.1 s; ${m.kind === "pty" ? "requests during a delay are dropped, like a busy device" : "requests during a delay queue"}</span></h3>
-      <div class="ctl-row">Fixed <input type="number" min="0" step="100" id="d-default" value="${dl.cycle ? "" : (dl.default || 0)}"> ms</div>
-      <div class="ctl-row">or cycle through <input type="text" class="wide" id="d-cycle" placeholder="500, 1000" value="${dl.cycle ? dl.cycle.ms.join(", ") : ""}"> ms,
-        every <input type="number" min="0.1" step="0.5" id="d-every" value="${dl.cycle ? dl.cycle.every_s : 10}"> s</div>
-      ${dl.unit && Object.keys(dl.unit).length || dl.fc && Object.keys(dl.fc).length ? `<div class="ctl-row hint">Kept from the file: ${esc(JSON.stringify({unit: dl.unit, fc: dl.fc}))}</div>` : ""}
-      <div class="ctl-row"><button class="primary" onclick="saveDelay()">Apply</button><button onclick="clearDelay()">No delay</button>
-        <span class="hint">now: ${esc(delayText(dl) || "none")}</span></div>
-    </div>
-    <div>
-      <h3>Value schedules <span class="hint" style="font-weight:400">values step every period, from when they're saved</span></h3>
-      <table class="sched"><thead><tr><th>Slave</th><th>Tag</th><th>Values</th><th>Every (s)</th><th></th></tr></thead><tbody>
-        ${draft.sched.map((s, i) => `<tr>
-          <td><select onchange="draft.sched[${i}].unit=Number(this.value);renderControls(detail)">${d.devices.map(x => `<option value="${x.unit}" ${x.unit === Number(s.unit) ? "selected" : ""}>${x.unit}</option>`).join("")}</select></td>
-          <td>${s.tag !== undefined ? `<select onchange="draft.sched[${i}].tag=this.value">${tagOpts(s.unit, s.tag)}</select>`
-               : `<span class="mono">${esc(s.table)} ${esc(s.addr)} ${esc(s.type)}</span>`}</td>
-          <td><input type="text" style="width:130px" value="${esc(s.values)}" placeholder="5, 10" oninput="draft.sched[${i}].values=this.value"></td>
-          <td><input type="number" style="width:70px" min="0.1" step="0.5" value="${esc(s.every_s)}" oninput="draft.sched[${i}].every_s=this.value"></td>
-          <td><button class="small danger" title="Remove" onclick="draft.sched.splice(${i},1);renderControls(detail)">✕</button></td></tr>`).join("")
-          || `<tr><td colspan="5" class="hint">None. ${m.file_schedules ? m.file_schedules + " more in the machine file." : ""}</td></tr>`}
-      </tbody></table>
-      <div class="ctl-row"><button class="small" onclick="addSched()">Add</button>
-        <button class="primary" onclick="saveSched()">Save schedules</button>
-        ${m.file_schedules ? `<span class="hint">+ ${m.file_schedules} from the machine file</span>` : ""}</div>
-    </div>
-    <div>
-      <h3>Auto-reset <span class="hint" style="font-weight:400">back to 0 when ptcsw hasn't written the address for a while</span></h3>
-      <table class="sched"><thead><tr><th>Slave</th><th>Table</th><th>Address</th><th>After (s)</th><th></th></tr></thead><tbody>
-        ${draft.resets.map((r, i) => `<tr>
-          <td><select onchange="draft.resets[${i}].unit=Number(this.value)">${d.devices.map(x => `<option value="${x.unit}" ${x.unit === Number(r.unit) ? "selected" : ""}>${x.unit}</option>`).join("")}</select></td>
-          <td><select onchange="draft.resets[${i}].table=this.value">${["coil", "hr"].map(t => `<option ${t === r.table ? "selected" : ""}>${t}</option>`).join("")}</select></td>
-          <td><input type="number" style="width:76px" min="0" max="65535" value="${esc(r.addr)}" oninput="draft.resets[${i}].addr=this.value"></td>
-          <td><input type="number" style="width:60px" min="1" step="1" value="${esc(r.after_s)}" oninput="draft.resets[${i}].after_s=this.value"></td>
-          <td><button class="small danger" title="Remove" onclick="draft.resets.splice(${i},1);renderControls(detail)">✕</button></td></tr>`).join("")
-          || '<tr><td colspan="5" class="hint">None.</td></tr>'}
-      </tbody></table>
-      <div class="ctl-row"><button class="small" onclick="draft.resets.push({unit: unitSel[sel] || detail.devices[0]?.unit || 1, table: 'hr', addr: 0, after_s: 30});renderControls(detail)">Add</button>
-        <button class="primary" onclick="saveResets()">Save auto-reset</button></div>
-    </div>
-    <div>
-      <h3>Device down <span class="hint" style="font-weight:400">stop answering without a restart, so the pty stays the same</span></h3>
-      <div class="ctl-row">${silentLeft(m) > 0
-        ? `<span class="pill bad">silent for ${Math.ceil(silentLeft(m))} more s</span><button class="primary" onclick="setSilent(0)">Answer again now</button>`
-        : `No replies for <input type="number" id="silent-s" min="1" step="10" value="60"> s <button class="danger" onclick="setSilent(Number($('#silent-s').value))">Go silent</button>`}</div>
-    </div></div>`;
-}
-function addSched() {
-  const u = unitSel[sel] || detail.devices[0]?.unit || 1;
-  const t = (detail.devices.find(x => x.unit === u) || {tags: []}).tags.find(t => !t.pending);
-  draft.sched.push({unit: u, tag: t ? t.tag : "", values: "", every_s: 5});
-  renderControls(detail);
-}
-async function saveSched() {
-  try { const r = await api(`/api/m/${sel}/schedules`, {schedules: draft.sched}); toast(r.schedules.length ? r.schedules.length + " schedule(s) saved" : "Schedules cleared"); draft = null; }
-  catch (e) { toast(e.message, true); }
-  await refresh(true);
-}
-async function saveResets() {
-  try { const r = await api(`/api/m/${sel}/resets`, {resets: draft.resets}); toast(r.resets.length ? r.resets.length + " auto-reset rule(s) saved" : "Auto-reset off"); draft = null; }
-  catch (e) { toast(e.message, true); }
-  await refresh(true);
-}
-async function setSilent(sec) {
-  if (sec > 0 && !confirm(`Stop ${sel} answering for ${sec} s? ptcsw will see the device as down.`)) return;
-  try { await api(`/api/m/${sel}/silent`, {seconds: sec}); toast(sec > 0 ? `${sel} silent for ${sec} s` : `${sel} answering again`); }
-  catch (e) { toast(e.message, true); }
-  await refresh(true);
-}
-async function saveDelay() {
-  const cyc = $("#d-cycle").value.split(",").map(s => s.trim()).filter(Boolean).map(Number);
-  const body = cyc.length ? {cycle: {ms: cyc, every_s: Number($("#d-every").value)}} : {default: Number($("#d-default").value) || 0};
-  try { const r = await api(`/api/m/${sel}/delay`, body); toast("Delay: " + (delayText(r.delay) || "none")); }
-  catch (e) { toast(e.message, true); }
-  await refresh(true);
-}
-async function clearDelay() {
-  try { await api(`/api/m/${sel}/delay`, {}); toast("Delay off"); } catch (e) { toast(e.message, true); }
-  await refresh(true);
-}
-
-async function loadLog() {
-  if (!sel) return;
-  let lines = [];
-  try { lines = (await api(`/api/m/${sel}/log?n=400`)).lines; } catch (e) { lines = [String(e)]; }
-  const el = $("#log");
-  const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
-  const quiet = $("#quiet").checked;
-  const wonly = $("#wonly").checked;
-  lines = lines.filter(l => (!quiet || !/ (connect|disconnect|speaks Modbus \w+)$/.test(l)) &&
-    (!wonly || (/ write |RESET|SILENT|silent/.test(l) && !/^\S+ ctl /.test(l)))).slice(-250);
-  el.innerHTML = lines.map(l => `<span class="${/RESET|SILENT|silent/.test(l) ? "e" : / write /.test(l) ? "w" : / exception |bad |garbled|malformed|error/.test(l) ? "e" : /delay|schedule|ignored/.test(l) ? "d" : / (connect|disconnect)$/.test(l) ? "c" : ""}">${esc(l)}</span>`).join("\n") || "(empty)";
-  if (atBottom || !el._init) { el.scrollTop = el.scrollHeight; el._init = true; }
-}
-
-async function refresh(withControls) {
+async function simAction(p, action, btn) {
+  if (action === "stop" && !confirm(`Stop ${p.port} (${p.name})?\n\nptcsw gets no answers on ${p.port} until you start it again, so its values stop updating in IoTLink. It also stays stopped after a reboot.`)) return;
+  btn.disabled = true; btn.textContent = action === "stop" ? "Stopping…" : "Starting…";
   try {
-    [machines, project] = await Promise.all([api("/api/machines"), api("/api/project")]);
-    if (!sel || (sel !== PROJECT && !machines.some(m => m.name === sel))) sel = PROJECT;
-    renderMachines();
-    const isProject = sel === PROJECT;
-    $("#controls").style.display = $("#logsec").style.display = isProject ? "none" : "";
-    if (isProject) { renderProject(project); return; }
-    if (!sel) { $("#head").innerHTML = '<div class="empty">No simulator files in machines/.</div>'; return; }
-    detail = await api(`/api/m/${sel}`);
-    renderHead(detail.machine);
-    renderBody(detail);
-    const silentNow = silentLeft(detail.machine) > 0;
-    if (withControls || controlsFor !== sel || silentNow !== controlsSilent) {
-      controlsFor = sel; controlsSilent = silentNow; if (withControls || controlsFor !== sel) draft = null; renderControls(detail);
-    }
-    if ($("#live").checked) loadLog();
-  } catch (e) { toast("Can't reach the UI server: " + e.message, true); }
+    const r = await fetch(`/api/sim/${encodeURIComponent(p.name)}/${action}`, {method: "POST"});
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.statusText);
+    toast(`${p.port} ${action === "stop" ? "stopped" : "started"}`);
+  } catch (e) { toast(`Couldn't ${action} ${p.port}: ${e.message}`); }
+  tick(true);
 }
-function readCell(r) {
-  if (!r.running) return '<span class="pill">simulator stopped</span>';
-  if (r.write_only) return `<span class="pill info">write-only: ${r.writes} write${r.writes === 1 ? "" : "s"}</span>`;
-  if (r.read_ago === undefined) return '<span class="pill warn">not read yet</span>';
-  const fresh = r.read_ago < Math.max(30, (r.report_ms || 0) / 1000 * 3);
-  return `<span class="pill ${fresh ? "ok" : "warn"}" title="${r.read_count} reads">read ${ago(r.read_ago)}</span>`;
-}
-function fmtNum(v) { return v === undefined || v === null ? "" : String(v); }
-function renderProject(p) {
-  $("#head").innerHTML = `<div class="detail-head">
-    <div style="min-width:0">
-      <h2>Studio project ${p.name ? `<span class="muted" style="font-weight:400">${esc(p.name)}</span>` : ""}</h2>
-      <div class="muted" style="font-size:13px">${p.loaded ? "loaded " + esc(p.loaded) : p.ports.length ? "built from the command line" : "No project loaded yet."}</div>
-    </div>
-    <div class="actions">
-      <input type="file" id="pfile" accept=".json,application/json" style="display:none" onchange="loadProject(this.files[0])">
-      <button class="primary" onclick="$('#pfile').click()">Load Studio project…</button>
-    </div></div>
-    <ol class="steps">
-      <li><b>Load</b> the project JSON you built and deployed (export it from Porta Studio). The simulator serves every enabled DP.</li>
-      <li><b>In IoTLink</b>, set the serial paths below in the build's application.json and deploy. After the PortaCON reboots, the simulator starts again by itself.</li>
-      <li><b>Open IoTLink → data analysis.</b> Each DP should show the value in <b>Expected in IoTLink</b>. A value of 81.11 means dp81 on COM1, slave 1, so a mixed-up address or port shows up as the wrong number.</li>
-    </ol>`;
-  if (!p.ports.length) { $("#body").innerHTML = '<div class="empty">Load the Studio project JSON to start.</div>'; return; }
-  const dpRow = r => `<tr>
-      <td><b>${esc(r.dp)}</b></td><td class="mono">${esc(r.table)} ${r.addr}</td>
-      <td class="mono">${esc(r.type)}${r.word_order && r.type !== "BOOL" && !/16/.test(r.type) ? " · " + esc(r.word_order) : ""}</td>
-      <td class="mono">${esc(fmtNum(r.value))}</td><td class="mono">${esc(r.expression || "—")}</td>
-      <td class="expected">${r.write_only ? '<span class="muted">not reported</span>' : r.expected_error ? `<span class="pill bad">${esc(r.expected_error)}</span>` : esc(fmtNum(r.expected))}</td>
-      <td class="muted">${r.report_ms ? r.report_ms / 1000 + " s" : ""}</td>
-      <td>${readCell(r)}</td>
-      <td class="num">${r.writes ? `<span class="pill ${r.writes > 1 ? "warn" : "info"}" title="writes from ptcsw">${r.writes} w</span>` : ""}</td></tr>`;
-  const proto = v => ({modbusRtu: "Modbus RTU", modbusAscii: "Modbus ASCII", modbusTcp: "Modbus TCP"}[v] || v || "");
-  const cards = p.ports.map(x => {
-    if (x.error) return `<div class="portcard"><div class="porthead"><span class="portname">${esc(x.name)}</span><span class="pill bad">${esc(x.error)}</span></div></div>`;
-    const target = x.kind === "pty"
-      ? `<span class="hint">${esc(x.application_json)} =</span> <span class="mono">${esc(x.link)}</span> <button class="small" onclick="copy('${esc(x.link)}')">Copy</button>`
-      : `<span class="hint">device IP / port =</span> <span class="mono">127.0.0.1 : ${x.port}</span>`;
-    const devs = x.devices.map(d => {
-      const rows = p.dps.filter(r => r.sim === x.name && r.unit === d.unit);
-      return `<div class="devhead"><span class="devname">${esc(d.name || "device")}</span>
-          <span class="pill info">slave ${d.unit}</span><span class="muted" style="font-size:12.5px">${esc(proto(d.protocol))} · ${rows.length} DP${rows.length === 1 ? "" : "s"}</span>
-          <span class="spacer"></span><a href="#" onclick="unitSel['${x.name}']=${d.unit};pick('${x.name}');return false" style="font-size:12.5px">change values, delays…</a></div>
-        <div class="tablewrap"><table class="dptable">
-          <colgroup><col style="width:11%"><col style="width:10%"><col style="width:15%"><col style="width:11%"><col style="width:10%"><col style="width:14%"><col style="width:10%"><col style="width:13%"><col style="width:6%"></colgroup>
-          <thead><tr><th>DP</th><th>Address</th><th>Type</th><th>Served (raw)</th><th>Expression</th><th>Expected in IoTLink</th><th>Reported</th><th>ptcsw reading it</th><th></th></tr></thead>
-          <tbody>${rows.map(dpRow).join("") || '<tr><td colspan="9" class="hint">No enabled datapoints.</td></tr>'}</tbody></table></div>`;
-    }).join("");
-    return `<div class="portcard">
-      <div class="porthead"><span class="dot ${x.running ? "on" : ""}"></span><span class="portname">${esc(x.studio_port || x.name)}</span>
-        ${target}<span class="spacer"></span>${pollPill(x)}</div>
-      ${devs}</div>`;
-  }).join("");
-  $("#body").innerHTML = `
-    <div class="section" style="border-top:0;padding-bottom:4px"><h3>Ports, devices and datapoints <span class="hint" style="font-weight:400">${p.dps.length} DPs served; updates every 2 s</span></h3></div>
-    ${cards}
-    ${p.notes.length ? `<div class="section"><h3>Notes from loading</h3><ul style="margin:0;padding-left:20px;font-size:13px">${p.notes.map(n => `<li>${esc(n)}</li>`).join("")}</ul></div>` : ""}`;
-}
-async function loadProject(file) {
-  if (!file) return;
-  let proj;
-  try { proj = JSON.parse(await file.text()); } catch (e) { $("#pfile").value = ""; return toast("That file isn't JSON: " + e.message, true); }
-  if (!confirm(`Load ${file.name}?\nIt replaces the Studio simulators (COM1-3) and starts them at fresh values.`)) { $("#pfile").value = ""; return; }
-  toast("Loading " + file.name + "…");
-  try { await api("/api/project", {name: file.name, project: proj}); toast("Loaded " + file.name); }
-  catch (e) { toast(e.message, true); }
-  $("#pfile").value = "";
-  refresh();
-}
-function setTab(g) { tab = g; store.set("tab", g); renderBody(detail); }
 
-async function setTag(i, value) {
-  const t = rows[i];
-  try { await api(`/api/m/${sel}/set`, {unit: unitSel[sel], values: {[t.tag]: value}}); toast(`${t.tag} = ${value}`); }
-  catch (e) { toast(e.message, true); }
-  document.activeElement?.blur(); refresh();
+function renderCards(p) {
+  const units = [...new Set(p.dps.map(d => d.unit))].sort((a, b) => a - b);
+  multi = units.length > 1;
+  $("#dpCount").textContent = `${p.dps.length} on ${units.length} device${units.length === 1 ? "" : "s"}`;
+  if (!p.dps.length) { $("#cards").innerHTML = `<div class="empty">No DPs on this port.</div>`; renderSlaveSeg(units); return; }
+  const groups = units.map(u => {
+    const dps = p.dps.filter(d => d.unit === u);
+    const seen = dps.map(d => d.read_ago).filter(x => x != null);
+    const last = seen.length ? Math.min(...seen) : null;
+    const head = multi ? `<div class="devh ${slaveF === u ? "on" : ""}" data-u="${u}" title="Show only this device in the log">
+        <span class="slave">Slave ${u}</span><b>${esc(dps[0].device)}</b>
+        <span class="devm"><span class="dot ${last != null && last < 10 ? "ok" : last != null ? "idle" : ""}"></span>${dps.length} DP${dps.length === 1 ? "" : "s"} · read ${esc(ago(last))}</span></div>` : "";
+    return `<section class="dev">${head}<div class="cards">${dps.map(cardHtml.bind(null, p)).join("")}</div></section>`;
+  });
+  $("#cards").innerHTML = groups.join("");
+  document.querySelectorAll(".card").forEach(c => c.onclick = () => setFocus(focus === c.dataset.dp ? null : c.dataset.dp));
+  document.querySelectorAll(".devh").forEach(h => h.onclick = () => setSlave(slaveF === +h.dataset.u ? null : +h.dataset.u));
+  renderSlaveSeg(units);
 }
-async function allAlarms() {
-  const values = {};
-  rows.filter(t => t.group === "alarm" && !t.pending && Number(t.value) !== 0).forEach(t => values[t.tag] = 0);
-  if (!Object.keys(values).length) return toast("Every alarm is already off");
-  try { await api(`/api/m/${sel}/set`, {unit: unitSel[sel], values}); toast(Object.keys(values).length + " alarms turned off"); }
-  catch (e) { toast(e.message, true); }
-  refresh();
+
+function renderSlaveSeg(units) {
+  const el = $("#slaveSeg");
+  if (units.length < 2) { el.innerHTML = ""; el.style.display = "none"; return; }
+  el.style.display = "";
+  el.innerHTML = `<button data-u="" class="${slaveF == null ? "on" : ""}">All devices</button>` +
+    units.map(u => `<button data-u="${u}" class="${slaveF === u ? "on" : ""}">Slave ${u}</button>`).join("");
+  el.querySelectorAll("button").forEach(b => b.onclick = () => setSlave(b.dataset.u === "" ? null : +b.dataset.u));
 }
-async function resetCounts() {
-  try { await api(`/api/m/${sel}/reset-counts`, {}); toast("Write counts reset"); } catch (e) { toast(e.message, true); }
-  refresh();
+
+function cardHtml(p, d) {
+  {
+    const key = p.name + "/" + d.unit + "/" + d.dp;
+    const val = d.value;
+    const changed = key in lastVals && JSON.stringify(lastVals[key]) !== JSON.stringify(val);
+    lastVals[key] = val;
+    let big;
+    if (val === undefined || val === null) big = `<div class="val none">${p.running ? (d.pending ? "no address" : "—") : "stopped"}</div>`;
+    else if (isBool(d.type)) big = `<div class="val"><span class="bool ${val ? "on" : "off"}">${val}<i>${val ? "on" : "off"}</i></span></div>`;
+    else big = `<div class="val ${typeof val === "string" ? "str" : ""}">${esc(fmt(val, d.type))}</div>`;
+    const iot = d.iotlink !== undefined && !d.write_only
+      ? `<div class="iot">IoTLink should show <b>${esc(fmt(d.iotlink, d.type))}</b>${d.expression ? ` <span class="mono">(${esc(d.expression)})</span>` : ""}</div>`
+      : d.write_only ? `<div class="iot">Write-only: not shown in IoTLink</div>` : "";
+    const fresh = d.read_ago != null && d.read_ago < 10;
+    return `<div class="card ${focus === d.dp ? "focus" : ""} ${changed ? "flash" : ""}" data-dp="${esc(d.dp)}">
+      <div class="top"><span class="name" title="${esc(d.dp)}">${esc(d.dp)}</span><span class="where">${esc(where(d))}</span></div>
+      ${big}
+      <div class="meta"><span>${esc(d.type)}</span>${d.report_ms ? `<span>report ${d.report_ms / 1000} s</span>` : ""}</div>
+      ${iot}
+      <div class="foot">${d.write_only && d.read_ago == null ? `<span>write-only · never read</span>` : `<span><span class="dot ${fresh ? "ok" : d.read_ago != null ? "idle" : ""}"></span>Read ${esc(ago(d.read_ago))}</span>`}
+        ${d.writes ? `<span class="w-pill" title="Writes from ptcsw">${d.writes}× written</span>` : `<span>not written</span>`}</div>
+    </div>`;
+  }
 }
-async function act(name, action) {
-  const what = name === "all" ? "every simulator" : name;
-  if (action === "reset" && !confirm(`Reset ${what} to the file's starting values and zero its write counts? It restarts.`)) return;
-  if (action === "stop" && name === "all" && !confirm("Stop every simulator?")) return;
-  toast({start: "Starting ", stop: "Stopping ", reset: "Resetting "}[action] + what + "…");
-  try { const r = await api(`/api/m/${name}/${action}`, {}); toast(r.output?.split("\n").pop() || "Done"); }
-  catch (e) { toast(e.message, true); }
-  refresh();
+
+// 2026-11-10T02:23:04.420 READ   dp82 = 1   by ptcsw   coil 70   [FC01 coil 70 x21 · unit 1 · pty RTU]  +10.004 s since last write
+const LINE = /^(\S+) (READ|WRITE|SET|RESET)\s+(.+?) = (.*?)\s+by (\S+)\s+(.*?)\s+\[([^\]]*)\]\s*(.*)$/;
+function parse(l) {
+  const m = LINE.exec(l);
+  if (!m) return {raw: l, time: (l.match(/^\S+T(\S+)/) || [])[1] || "", text: l.replace(/^\S+ /, "")};
+  const u = /unit (\d+)/.exec(m[7]);
+  return {time: m[1].split("T")[1] || m[1], verb: m[2], dp: m[3], value: m[4], by: m[5], addr: m[6], detail: m[7], note: m[8], unit: u ? +u[1] : null, raw: l};
 }
-refresh(true);
-setInterval(() => {
-  const a = document.activeElement;
-  if (a && (a.dataset?.ui !== undefined || a.closest?.("#controls"))) return;  // don't redraw under someone typing
-  refresh();
-}, 2000);
+function typeOf(dp) { const p = ports.find(x => x.name === sel); const d = p && p.dps.find(x => x.dp === dp); return d ? d.type : null; }
+function valueHtml(e) {
+  let v = e.value, extra = "";
+  const was = v.match(/^(.*) \(was (.*)\)$/);
+  if (was) { v = was[1]; extra = ` <small>was ${esc(was[2])}</small>`; }
+  const t = typeOf(e.dp);
+  const cls = isBool(t) ? (v === "1" ? "on" : "off") : v.startsWith('"') ? "str" : "";
+  return `<span class="v ${cls}">${esc(v)}${extra}</span>`;
+}
+function rowHtml(e, isNew) {
+  if (!e.verb) {
+    const cls = / exception |malformed|garbled|error|bad /.test(e.raw) ? "bad" : /silent|SILENT|delay|ignored/.test(e.raw) ? "warn" : / (read|write) /.test(e.raw) ? "old" : "";
+    return `<div class="ev ${cls}"><span class="t">${esc(e.time)}</span><span>${esc(e.text)}</span></div>`;
+  }
+  const nodp = e.dp === "(no DP)";
+  const note = e.note ? e.note.replace(/^(\+[\d.]+ s)/, "<b>$1</b>") : "";
+  return `<div class="row ${isNew ? "new" : ""}" title="${esc(e.detail)}">
+    <span class="t">${esc(e.time)}</span><span class="verb ${e.verb}">${e.verb}</span>
+    <span class="dpn ${nodp ? "nodp" : ""}" ${nodp ? 'title="No DP at this address in the project"' : `data-dp="${esc(e.dp)}"`}>${multi && e.unit != null ? `<span class="sl">S${e.unit}</span>` : ""}${esc(e.dp)}</span>
+    ${valueHtml(e)}<span class="by ${esc(e.by)}">by ${esc(e.by)}</span><span class="addr">${esc(e.addr)}</span>
+    <span class="note">${note || `<span style="color:var(--dim)">${esc(e.detail)}</span>`}</span></div>`;
+}
+function keep(e) {
+  if (!e.verb) return !focus && slaveF == null && mode !== "reads" && !/ (connect|disconnect|speaks Modbus \w+)$/.test(e.raw);
+  if (e.by === "manual" && e.verb === "READ") return false;  // the monitor's and modbus_client.py's own reads
+  if (focus && e.dp !== focus) return false;
+  if (slaveF != null && e.unit !== slaveF) return false;
+  if (mode === "changes") return e.verb !== "READ";
+  if (mode === "reads") return e.verb === "READ";
+  return true;
+}
+let pending = null;
+function renderLog(lines, force) {
+  const box = $("#rows");
+  if (!force && box.scrollTop > 40) { pending = lines; $("#more").classList.add("show"); return; }
+  pending = null; $("#more").classList.remove("show");
+  const entries = lines.map(parse).filter(keep).reverse().slice(0, 300);
+  const fresh = new Set(lines);
+  $("#list").innerHTML = entries.length ? entries.map(e => rowHtml(e, !firstLog && !seenLines.has(e.raw))).join("")
+    : `<div class="empty">${focus ? "Nothing for " + esc(focus) + " in the recent log." : slaveF != null ? "Nothing from slave " + slaveF + " in the recent log." : "No activity yet."}</div>`;
+  seenLines = fresh; firstLog = false;
+  document.querySelectorAll(".dpn[data-dp]").forEach(e => e.onclick = () => setFocus(e.dataset.dp));
+}
+
+function setFocus(dp) {
+  focus = dp;
+  $("#focusChip").innerHTML = dp ? `<span class="chip">${esc(dp)}<button title="Show all DPs">×</button></span>` : "";
+  if (dp) $("#focusChip button").onclick = () => setFocus(null);
+  document.querySelectorAll(".card").forEach(c => c.classList.toggle("focus", c.dataset.dp === dp));
+  firstLog = true; tick(true);
+}
+function setSlave(u) {
+  slaveF = u; firstLog = true;
+  document.querySelectorAll(".devh").forEach(h => h.classList.toggle("on", +h.dataset.u === u));
+  document.querySelectorAll("#slaveSeg button").forEach(b => b.classList.toggle("on", b.dataset.u === (u == null ? "" : String(u))));
+  tick(true);
+}
+function select(n) { sel = n; focus = null; slaveF = null; $("#focusChip").innerHTML = ""; lastVals = {}; firstLog = true; try { localStorage.setItem("sel", n); } catch (e) {} history.replaceState(null, "", "#" + n); tick(true); }
+
+async function tick(force) {
+  if (paused && !force) return;
+  try {
+    const o = await api("/api/overview");
+    ports = o.ports; lastOk = Date.now();
+    if (!ports.length) {
+      $("#tabs").innerHTML = ""; $("#port").innerHTML = `<div class="notice">No simulated ports yet. Load a Studio project from the terminal: <code>python3 studio_to_init.py &lt;project.json&gt;</code>, then <code>./run.sh all</code>.</div>`;
+      $("#cards").innerHTML = ""; $("#list").innerHTML = ""; return;
+    }
+    if (!ports.some(p => p.name === sel)) sel = ports[0].name;
+    const p = ports.find(x => x.name === sel);
+    renderTabs(); renderPort(p); renderCards(p);
+    const lg = await api(`/api/log/${encodeURIComponent(sel)}?n=600`);
+    renderLog(lg.lines, force);
+    $("#live").className = "live" + (paused ? " paused" : "");
+    $("#liveText").textContent = paused ? "Paused" : "Live · " + new Date().toLocaleTimeString();
+  } catch (e) {
+    $("#live").className = "live down"; $("#liveText").textContent = "Can't reach the simulator";
+  }
+}
+
+document.querySelectorAll("#mode button").forEach(b => b.onclick = () => {
+  mode = b.dataset.m; try { localStorage.setItem("mode", mode); } catch (e) {}
+  document.querySelectorAll("#mode button").forEach(x => x.classList.toggle("on", x === b)); firstLog = true; tick(true);
+});
+$("#pause").onclick = () => { paused = !paused; $("#pause").textContent = paused ? "Resume" : "Pause"; tick(true); };
+$("#more button").onclick = () => { $("#rows").scrollTop = 0; if (pending) renderLog(pending, true); };
+$("#rows").addEventListener("scroll", () => { if ($("#rows").scrollTop <= 40 && pending) renderLog(pending, true); });
+tick(true); setInterval(() => tick(false), 1000);
 </script>
 </body>
 </html>
