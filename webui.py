@@ -124,7 +124,10 @@ def port_view(name):
                 row["read_ago"] = round(now - seen[t["tag"]][0], 1)
                 row["reads"] = seen[t["tag"]][1]
             dps.append(row)
-    return {"name": name, "title": cfg.get("machine", name), "port": cfg.get("studio_port") or name.upper(),
+    port = cfg.get("studio_port") or name.upper()
+    return {"name": name, "title": cfg.get("machine", name), "port": port,
+            "group": port if ep["kind"] == "pty" else "TCP", "controllable": True,
+            "proto": "Modbus TCP" if ep["kind"] == "tcp" else "Modbus " + (cfg.get("framing") or "RTU").upper(),
             "kind": ep["kind"], "link": ep.get("path"), "tcp": ep.get("port"), "framing": cfg.get("framing"),
             "running": pid is not None, "poll": last_poll(name) if pid else None,
             "silent_left": round(silent - now) if silent > now else 0, "dps": dps}
@@ -137,7 +140,203 @@ def overview():
             ports.append(port_view(n))
         except SystemExit as ex:  # a broken file shouldn't hide the others
             ports.append({"name": n, "title": n, "port": n.upper(), "error": str(ex), "running": False, "dps": []})
+    for sim in other_sims().values():
+        try:
+            ports.append(sim["view"]())
+        except Exception as ex:  # a half-written file shouldn't break the page
+            ports.append({"name": sim["name"], "title": sim["name"], "port": "TCP", "group": "TCP",
+                          "proto": sim["proto"], "error": str(ex), "running": True, "dps": []})
     return {"ports": ports, "now": time.time()}
+
+
+# ---------------------------------------------------------------- MC protocol and EtherNet/IP simulators
+# Those simulators aren't part of this repo (mc_plc_sim.py, eip_attr_sim.py). The monitor shows the ones that are
+# running on this machine, found by process name, read-only: values from their state/model files and ptcsw's
+# requests from their logs, turned into the same log line format as the Modbus simulator's.
+
+def _proc_args(pid):
+    try:
+        with open("/proc/%s/cmdline" % pid, "rb") as f:
+            args = f.read().decode("utf-8", "replace").split("\0")
+        cwd = os.readlink("/proc/%s/cwd" % pid)
+        out = os.readlink("/proc/%s/fd/1" % pid)
+    except OSError:
+        return None
+    return args, cwd, out if out.startswith("/") and os.path.isfile(out) else None
+
+
+def _opt(args, name, default=None):
+    return args[args.index(name) + 1] if name in args and args.index(name) + 1 < len(args) else default
+
+
+def other_sims():
+    """{name: {"name", "proto", "view": fn, "log": fn}} for each running MC / EtherNet/IP simulator."""
+    sims = {}
+    if not os.path.isdir("/proc"):
+        return sims
+    for pid in os.listdir("/proc"):
+        if not pid.isdigit():
+            continue
+        got = _proc_args(pid)
+        if not got:
+            continue
+        args, cwd, out = got
+        script = next((os.path.basename(a) for a in args[:3] if a.endswith(".py")), "")
+        if script == "mc_plc_sim.py":
+            init = os.path.join(cwd, _opt(args, "--init", ""))
+            name = "mc-" + os.path.basename(init).split(".")[0]
+            sims[name] = _mc_sim(name, init, os.path.join(cwd, _opt(args, "--state", "")), out,
+                                 int(_opt(args, "--port", 0) or 0))
+        elif script == "eip_attr_sim.py":
+            model = os.path.join(cwd, _opt(args, "--model", "model.json"))
+            name = "eip-" + os.path.basename(model).split(".")[0]
+            sims[name] = _eip_sim(name, model, out, _opt(args, "--host", "0.0.0.0"), int(_opt(args, "--port", 44818)))
+    return sims
+
+
+def _iso_ago(ts, now):
+    try:
+        return round(now - datetime.fromisoformat(ts).timestamp(), 1)
+    except ValueError:
+        return None
+
+
+def _ext_view(name, proto, port, title, dps, lines, now, conv):
+    """A port-like dict for the page, with read_ago per DP and the newest poll, from converted log lines."""
+    last, poll = {}, None
+    for line in lines:
+        for e in conv(line):
+            m = re.match(r"^(\S+) READ\s+(.+?) = ", e)
+            if m:
+                last[m.group(2)] = m.group(1)
+                poll = m.group(1)
+    for d in dps:
+        if d["dp"] in last:
+            d["read_ago"] = _iso_ago(last[d["dp"]], now)
+    ago = _iso_ago(poll, now) if poll else None
+    return {"name": name, "title": title, "port": "TCP", "group": "TCP", "proto": proto, "kind": "tcp",
+            "tcp": port, "framing": None, "running": True, "controllable": False,
+            "poll": {"ago": ago} if ago is not None else None, "silent_left": 0, "dps": dps}
+
+
+MC_TYPES_WORDS = {"INT16": 1, "UINT16": 1, "INT32": 2, "UINT32": 2, "FLOAT32": 2}
+MC_LINE = re.compile(r"^(\S+) (BIN|ASCII)/(3E|4E) (read|write) ([A-Z]+)([0-9A-F]+) (word|bit) x(\d+) = (\S.*?)(?: text\(|$)")
+
+
+def _mc_sim(name, init, state, log, port):
+    def tags():
+        return [t for t in read_json(init, []) if isinstance(t, dict)]
+
+    def nwords(t):
+        return int(t.get("words", 1)) if t["type"] in ("STRING", "WORDS") else MC_TYPES_WORDS.get(t["type"], 1)
+
+    def decode(t, words):
+        opts = {"word_order": "little", "byte_order": "big" if t.get("byte_order", "LH").upper() == "HL" else "little"}
+        return decode_value(t["type"], words, opts)
+
+    def conv(line):
+        """One MC request line -> one log line per DP it covers."""
+        m = MC_LINE.match(line)
+        if not m:
+            return []
+        ts, kind, frame, op, dev, start, unit, count, data = m.groups()
+        start, count = int(start, 16) if dev in ("X", "Y", "B", "W") else int(start), int(count)
+        is_bit = unit == "bit"
+        vals = list(data.strip()) if is_bit else [int(w, 16) for w in re.findall(r"[0-9A-F]{4}", data.split("]")[0])]
+        out = []
+        for t in tags():
+            if t.get("dev") != dev or (t["type"] == "BOOL") != is_bit:
+                continue
+            off, n = t["addr"] - start, (1 if is_bit else nwords(t))
+            if off < 0 or off + n > count or off + n > len(vals):
+                continue
+            try:
+                v = int(vals[off]) if is_bit else decode(t, vals[off:off + n])
+            except Exception:
+                continue
+            verb = "READ" if op == "read" else "WRITE"
+            vtxt = '"%s"' % v if isinstance(v, str) else ("%.7g" % v if isinstance(v, float) else str(v))
+            out.append("%s %-6s %-28s by %-11s %-14s [%s %s %s%d x%d · unit 1 · tcp]"
+                       % (ts, verb, "%s = %s" % (t["tag"], vtxt), "ptcsw", "%s%s" % (dev, t["addr"]),
+                          frame, op, dev, start, count))
+        return out or ["%s %s" % (ts, line.split(" ", 1)[1])]
+
+    def view():
+        now = time.time()
+        st = read_json(state, {})
+        words, bits = st.get("words", {}), st.get("bits", {})
+        dps = []
+        for t in tags():
+            row = {"dp": t.get("tag", "%s%s" % (t["dev"], t["addr"])), "unit": 1,
+                   "device": t.get("device") or "MC Protocol", "table": t["dev"], "addr": t["addr"], "bit": None,
+                   "type": t["type"], "words": nwords(t), "pending": False, "expression": "", "report_ms": None,
+                   "write_only": False, "writes": 0}
+            try:
+                if t["type"] == "BOOL":
+                    row["value"] = int(bits.get(t["dev"], {}).get(str(t["addr"]), 0))
+                else:
+                    m = words.get(t["dev"], {})
+                    row["value"] = decode(t, [int(m.get(str(t["addr"] + i), 0)) for i in range(nwords(t))])
+                row["iotlink"] = row["value"]
+            except Exception as ex:
+                row["value"], row["error"] = None, str(ex)
+            dps.append(row)
+        dev = next((d["device"] for d in dps), "MC Protocol")
+        return _ext_view(name, "MC Protocol", port, dev, dps, tail(log, 400) if log else [], now, conv)
+
+    return {"name": name, "proto": "MC Protocol", "view": view,
+            "log": lambda n: [x for line in (tail(log, n) if log else []) for x in conv(line)][-n:]}
+
+
+EIP_LINE = re.compile(r"^(\S+) (\S+) (GET|SET) (0x[0-9a-f]+)/(\d+)/(0x[0-9a-f]+)(?: data=[0-9a-f ]*)? -> status (0x[0-9a-f]+)\s*(.*)$")
+
+
+def _eip_sim(name, model, log, host, port):
+    def num(x):
+        return int(x, 0) if isinstance(x, str) else int(x)
+
+    def entries():
+        """[(key, dp name, device, type, value, where)] for every scalar attribute and block field."""
+        out = []
+        for a in read_json(model, {}).get("attributes", []):
+            key = (num(a["class"]), num(a["instance"]), num(a["attribute"]))
+            where = "%#04x/%d/%#04x" % key
+            for f in (a.get("fields") or [a]):
+                label = f.get("name") or where
+                m = re.match(r"^(\S+)\s*\((.*)\)$", label)
+                dp, device = (m.group(1), m.group(2)) if m else (label, "EtherNet/IP")
+                at = where + ("+%d" % f["offset"] if "offset" in f else "")
+                out.append((key, dp, device, f.get("type"), f.get("value"), at))
+        return out
+
+    def conv(line):
+        m = EIP_LINE.match(line)
+        if not m:
+            return ["%s %s" % tuple(line.split(" ", 1))] if " " in line else []
+        ts, peer, op, c, i, a, status, desc = m.groups()
+        key = (int(c, 16), int(i), int(a, 16))
+        hits = [e for e in entries() if e[0] == key]
+        if status != "0x00" or not hits:
+            return ["%s %s %s %s/%s/%s -> status %s %s" % (ts, peer, op, c, i, a, status, desc)]
+        verb = "READ" if op == "GET" else "WRITE"
+        vals = dict(re.findall(r"(\S+?)@\d+=(\S+?)[,\]]", desc)) if "block" in desc else {}
+        out = []
+        for _, dp, _, typ, value, at in hits:
+            v = vals.get(dp, desc.split("=", 1)[1] if "=" in desc and "block" not in desc else value)
+            out.append("%s %-6s %-28s by %-11s %-14s [%s %s · unit 1 · tcp %s]"
+                       % (ts, verb, "%s = %s" % (dp, v), "ptcsw", at, op, "%s %s" % (typ, at), peer))
+        return out
+
+    def view():
+        now = time.time()
+        dps = [{"dp": dp, "unit": 1, "device": device, "table": "", "addr": at, "bit": None, "type": typ,
+                "words": 1, "pending": False, "expression": "", "report_ms": None, "write_only": False, "writes": 0,
+                "value": value, "iotlink": value} for _, dp, device, typ, value, at in entries()]
+        dev = next((d["device"] for d in dps), "EtherNet/IP")
+        return _ext_view(name, "EtherNet/IP", port, dev, dps, tail(log, 400) if log else [], now, conv)
+
+    return {"name": name, "proto": "EtherNet/IP", "view": view, "host": host,
+            "log": lambda n: [x for line in (tail(log, n) if log else []) for x in conv(line)][-n:]}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -165,10 +364,13 @@ class Handler(BaseHTTPRequestHandler):
             if parts == ["api", "overview"]:
                 return self.send(200, overview())
             if len(parts) == 3 and parts[:2] == ["api", "log"]:
-                if parts[2] not in machine_names():
-                    return self.send(404, {"error": "no simulator %r" % parts[2]})
                 n = min(int(query.get("n", 300)), 2000)
-                return self.send(200, {"lines": tail(path(parts[2], ".log"), n)})
+                if parts[2] in machine_names():
+                    return self.send(200, {"lines": tail(path(parts[2], ".log"), n)})
+                other = other_sims().get(parts[2])
+                if other:
+                    return self.send(200, {"lines": other["log"](n)})
+                return self.send(404, {"error": "no simulator %r" % parts[2]})
             self.send(404, {"error": "not found"})
         except Exception as ex:
             self.send(500, {"error": "%s: %s" % (type(ex).__name__, ex)})
@@ -274,6 +476,17 @@ header { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, va
 .tab small { display: block; color: var(--muted); font-size: 11px; }
 .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--off); }
 .dot.ok { background: var(--green); } .dot.idle { background: var(--amber); } .dot.bad { background: var(--red); }
+
+/* device picker: one device at a time when a port has several */
+.devpick { display: flex; flex-wrap: wrap; gap: 8px; margin: -8px 0 20px; }
+.devpick:empty { display: none; }
+.dv { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--line); background: transparent; text-align: left; }
+.dv:hover { border-color: var(--line-2); }
+.dv.on { border-color: color-mix(in srgb, var(--violet) 55%, transparent); background: var(--violet-bg); }
+.dv b { font-weight: 600; font-size: 13px; }
+.dv small { color: var(--muted); font-size: 11px; }
+.proto { font: 600 11px var(--sans); color: var(--violet); background: var(--violet-bg); padding: 2px 8px; border-radius: 6px; }
 
 /* port header */
 .port { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 24px; margin-bottom: 14px; }
@@ -455,6 +668,7 @@ footer { margin-top: 34px; }
 
 <div class="wrap">
   <nav class="tabs" id="tabs"></nav>
+  <div class="devpick" id="devpick"></div>
   <div id="port"></div>
 
   <div class="sec"><h3>Data points</h3><span id="dpCount"></span></div>
@@ -489,15 +703,23 @@ footer { margin-top: 34px; }
 const $ = s => document.querySelector(s);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
 let ports = [], sel = null, focus = null, mode = "all", paused = false, slaveF = null, multi = false;
+let devSel = {}, cur = null;  // devSel: chosen device per tab ("<sim>|<unit>"); cur: {p, unit} being shown
 let lastVals = {}, seenLines = new Set(), firstLog = true, lastOk = 0;
 
-try { sel = localStorage.getItem("sel"); mode = localStorage.getItem("mode") || "all"; } catch (e) {}
-if (location.hash.length > 1) sel = decodeURIComponent(location.hash.slice(1));  // e.g. #com3 opens that port
+try { sel = localStorage.getItem("sel"); mode = localStorage.getItem("mode") || "all"; devSel = JSON.parse(localStorage.getItem("devSel") || "{}"); } catch (e) {}
+if (location.hash.length > 1) {  // #COM3 opens that port, #TCP/mc-qa a device on it
+  const [g, sim] = decodeURIComponent(location.hash.slice(1)).split("/");
+  sel = g; if (sim) devSel[g] = sim.includes("|") ? sim : sim + "|1";
+}
 document.querySelectorAll("#mode button").forEach(b => b.classList.toggle("on", b.dataset.m === mode));
 
 function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 1600); }
 function ago(s) { if (s == null) return "never"; if (s < 1) return "just now"; if (s < 60) return s.toFixed(s < 10 ? 1 : 0) + " s ago"; if (s < 3600) return Math.round(s / 60) + " min ago"; return Math.round(s / 3600) + " h ago"; }
-function where(d) { return d.pending ? "no address" : d.table + " " + d.addr + (d.bit != null ? " bit " + d.bit : ""); }
+function where(d) {
+  if (d.pending) return "no address";
+  if (!["coil", "di", "ir", "hr"].includes(d.table)) return (d.table || "") + d.addr;  // MC "D200", EIP "0x67/1/0x325"
+  return d.table + " " + d.addr + (d.bit != null ? " bit " + d.bit : "");
+}
 function fmt(v, type) {
   if (v === undefined || v === null) return null;
   if (typeof v === "number" && type === "FLOAT32") return String(+v.toPrecision(7));
@@ -514,17 +736,53 @@ function portState(p) {
 
 async function api(u) { const r = await fetch(u, {cache: "no-store"}); if (!r.ok) throw new Error((await r.json()).error || r.statusText); return r.json(); }
 
+function groups() { return [...new Set(ports.map(p => p.group || p.port))]; }
+function devicesOf(g) {
+  return ports.filter(p => (p.group || p.port) === g).flatMap(p => {
+    const units = [...new Set(p.dps.map(d => d.unit))].sort((a, b) => a - b);
+    return (units.length ? units : [null]).map(u => {
+      const dps = p.dps.filter(d => d.unit === u);
+      const seen = dps.map(d => d.read_ago).filter(x => x != null);
+      return {key: p.name + "|" + u, p, unit: u, name: dps.length ? dps[0].device : p.title, proto: p.proto || "", dps,
+              last: seen.length ? Math.min(...seen) : null};
+    });
+  }).sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, {numeric: true}));
+}
+function devState(d) {
+  const [cls, txt] = portState(d.p);
+  if (cls !== "ok" || d.unit == null) return [cls, txt];
+  return d.last != null && d.last < 30 ? ["ok", "ptcsw reading"] : ["idle", d.last != null ? "Last read " + ago(d.last) : "Not read yet"];
+}
 function renderTabs() {
-  $("#tabs").innerHTML = ports.map(p => {
-    const [cls, txt] = portState(p);
-    return `<button class="tab ${p.name === sel ? "on" : ""}" data-n="${esc(p.name)}"><span class="dot ${cls}"></span>
-      <span><b>${esc(p.port)}</b><small>${esc(txt)} · ${p.dps.length} DP${p.dps.length === 1 ? "" : "s"}</small></span></button>`;
-  }).join("") || "";
+  $("#tabs").innerHTML = groups().map(g => {
+    const devs = devicesOf(g), sts = devs.map(devState);
+    const cls = sts.some(x => x[0] === "bad") ? "bad" : sts.every(x => x[0] === "ok") ? "ok" : sts.some(x => x[0] === "ok") ? "ok" : "idle";
+    const nDp = devs.reduce((n, d) => n + d.dps.length, 0);
+    const txt = devs.length > 1 ? `${devs.length} devices` : (sts[0] || ["", ""])[1];
+    return `<button class="tab ${g === sel ? "on" : ""}" data-n="${esc(g)}"><span class="dot ${cls}"></span>
+      <span><b>${esc(g)}</b><small>${esc(txt)} · ${nDp} DP${nDp === 1 ? "" : "s"}</small></span></button>`;
+  }).join("");
   document.querySelectorAll(".tab").forEach(b => b.onclick = () => select(b.dataset.n));
 }
+function renderDevPick(devs) {
+  const el = $("#devpick");
+  if (devs.length < 2) { el.innerHTML = ""; return; }
+  el.innerHTML = devs.map(d => {
+    const [cls, txt] = devState(d);
+    const at = d.p.kind === "pty" ? `slave ${d.unit}` : d.p.tcp ? `:${d.p.tcp}` : "";
+    return `<button class="dv ${cur && d.key === cur.key ? "on" : ""}" data-k="${esc(d.key)}" title="${esc(txt)}"><span class="dot ${cls}"></span>
+      <span><b>${esc(d.name)}</b> <small>${esc(d.proto)}${at ? " · " + esc(at) : ""} · ${d.dps.length} DP${d.dps.length === 1 ? "" : "s"}</small></span></button>`;
+  }).join("");
+  el.querySelectorAll(".dv").forEach(b => b.onclick = () => pickDev(b.dataset.k));
+}
+function pickDev(k) {
+  devSel[sel] = k; try { localStorage.setItem("devSel", JSON.stringify(devSel)); } catch (e) {}
+  history.replaceState(null, "", "#" + sel + "/" + k.replace(/\|1$/, ""));
+  focus = null; $("#focusChip").innerHTML = ""; lastVals = {}; firstLog = true; tick(true);
+}
 
-function renderPort(p) {
-  const [cls, txt] = portState(p);
+function renderPort(p, d) {
+  const [cls, txt] = devState(d);
   const ep = p.kind === "pty" ? `<span class="path" title="Click to copy" data-copy="${esc(p.link)}">${esc(p.link)}</span>`
                               : `<span class="mono">TCP port ${esc(p.tcp)}</span>`;
   let notice = "";
@@ -532,13 +790,10 @@ function renderPort(p) {
   else if (!p.running) notice = `<div class="notice bad"><b>${esc(p.name)} is stopped</b>, so ptcsw gets no answers on this port. Use <b>Start</b> above when you want it back.</div>`;
   else if (p.silent_left) notice = `<div class="notice warn">Simulating a dead device: no replies for another ${p.silent_left} s.</div>`;
   else if (!p.poll) notice = `<div class="notice">Waiting for ptcsw. If nothing arrives, check that 포트 경로 for ${esc(p.port)} in Porta Studio is exactly the path above.</div>`;
-  const devList = [...new Map(p.dps.map(d => [d.unit, d.device])).entries()];
-  const devs = devList.length === 1 ? `slave ${devList[0][0]} · ${devList[0][1]}`
-             : devList.length ? `${devList.length} devices · slaves ${devList.map(x => x[0]).join(", ")}` : "";
-  $("#port").innerHTML = `<div class="port"><div><h2>${esc(p.port)}${devs ? ` <span style="color:var(--muted);font-weight:500;font-size:15px">${esc(devs)}</span>` : ""}</h2></div>
-    <div class="sub"><span><span class="dot ${cls}" style="display:inline-block;margin-right:6px"></span>${esc(txt)}</span>${ep}
-    ${p.framing ? `<span>${esc(String(p.framing).toUpperCase())}</span>` : ""}</div>
-    ${p.error ? "" : `<div class="ctl">${p.running
+  $("#port").innerHTML = `<div class="port"><div><h2>${esc(d.name)} <span style="color:var(--muted);font-weight:500;font-size:15px">${esc(p.port)}${d.unit != null && p.kind === "pty" ? " · slave " + d.unit : ""}</span></h2></div>
+    <div class="sub"><span><span class="dot ${cls}" style="display:inline-block;margin-right:6px"></span>${esc(txt)}</span>
+    ${d.proto ? `<span class="proto">${esc(d.proto)}</span>` : ""}${ep}</div>
+    ${p.error || p.controllable === false ? "" : `<div class="ctl">${p.running
       ? `<button class="act stop" id="simBtn" data-a="stop">■ Stop ${esc(p.port)}</button>`
       : `<button class="act start" id="simBtn" data-a="start">▶ Start ${esc(p.port)}</button>`}</div>`}</div>${notice}`;
   const b = $("#simBtn"); if (b) b.onclick = () => simAction(p, b.dataset.a, b);
@@ -546,7 +801,8 @@ function renderPort(p) {
 }
 
 async function simAction(p, action, btn) {
-  if (action === "stop" && !confirm(`Stop ${p.port} (${p.name})?\n\nptcsw gets no answers on ${p.port} until you start it again, so its values stop updating in IoTLink. It also stays stopped after a reboot.`)) return;
+  const others = devicesOf(p.group || p.port).filter(d => d.p.name === p.name).length;
+  if (action === "stop" && !confirm(`Stop ${p.port} (${p.name})?\n\nptcsw gets no answers ${others > 1 ? "from all " + others + " devices on this simulator" : "from it"} until you start it again, so its values stop updating in IoTLink. It also stays stopped after a reboot.`)) return;
   btn.disabled = true; btn.textContent = action === "stop" ? "Stopping…" : "Starting…";
   try {
     const r = await fetch(`/api/sim/${encodeURIComponent(p.name)}/${action}`, {method: "POST"});
@@ -557,24 +813,14 @@ async function simAction(p, action, btn) {
   tick(true);
 }
 
-function renderCards(p) {
-  const units = [...new Set(p.dps.map(d => d.unit))].sort((a, b) => a - b);
-  multi = units.length > 1;
-  $("#dpCount").textContent = `${p.dps.length} on ${units.length} device${units.length === 1 ? "" : "s"}`;
-  if (!p.dps.length) { $("#cards").innerHTML = `<div class="empty">No DPs on this port.</div>`; renderSlaveSeg(units); return; }
-  const groups = units.map(u => {
-    const dps = p.dps.filter(d => d.unit === u);
-    const seen = dps.map(d => d.read_ago).filter(x => x != null);
-    const last = seen.length ? Math.min(...seen) : null;
-    const head = multi ? `<div class="devh ${slaveF === u ? "on" : ""}" data-u="${u}" title="Show only this device in the log">
-        <span class="slave">Slave ${u}</span><b>${esc(dps[0].device)}</b>
-        <span class="devm"><span class="dot ${last != null && last < 10 ? "ok" : last != null ? "idle" : ""}"></span>${dps.length} DP${dps.length === 1 ? "" : "s"} · read ${esc(ago(last))}</span></div>` : "";
-    return `<section class="dev">${head}<div class="cards">${dps.map(cardHtml.bind(null, p)).join("")}</div></section>`;
-  });
-  $("#cards").innerHTML = groups.join("");
+function renderCards(p, d) {
+  multi = false;
+  const dps = d.dps;
+  $("#dpCount").textContent = `${dps.length} on ${d.name}`;
+  if (!dps.length) { $("#cards").innerHTML = `<div class="empty">No DPs on this device.</div>`; renderSlaveSeg([]); return; }
+  $("#cards").innerHTML = `<div class="cards">${dps.map(cardHtml.bind(null, p)).join("")}</div>`;
   document.querySelectorAll(".card").forEach(c => c.onclick = () => setFocus(focus === c.dataset.dp ? null : c.dataset.dp));
-  document.querySelectorAll(".devh").forEach(h => h.onclick = () => setSlave(slaveF === +h.dataset.u ? null : +h.dataset.u));
-  renderSlaveSeg(units);
+  renderSlaveSeg([]);
 }
 
 function renderSlaveSeg(units) {
@@ -619,7 +865,7 @@ function parse(l) {
   const u = /unit (\d+)/.exec(m[7]);
   return {time: m[1].split("T")[1] || m[1], verb: m[2], dp: m[3], value: m[4], by: m[5], addr: m[6], detail: m[7], note: m[8], unit: u ? +u[1] : null, raw: l};
 }
-function typeOf(dp) { const p = ports.find(x => x.name === sel); const d = p && p.dps.find(x => x.dp === dp); return d ? d.type : null; }
+function typeOf(dp) { const d = cur && cur.dps.find(x => x.dp === dp); return d ? d.type : null; }
 function valueHtml(e) {
   let v = e.value, extra = "";
   const was = v.match(/^(.*) \(was (.*)\)$/);
@@ -642,7 +888,8 @@ function rowHtml(e, isNew) {
     <span class="note">${note || `<span style="color:var(--dim)">${esc(e.detail)}</span>`}</span></div>`;
 }
 function keep(e) {
-  if (!e.verb) return !focus && slaveF == null && mode !== "reads" && !/ (connect|disconnect|speaks Modbus \w+)$/.test(e.raw);
+  if (!e.verb) return !focus && mode !== "reads" && !/ (connect|connected|disconnect|disconnected|speaks Modbus \w+)$|RegisterSession/.test(e.raw)
+    && (slaveF == null || !/unit \d+/.test(e.raw) || new RegExp("unit " + slaveF + "\\b").test(e.raw));
   if (e.by === "manual" && e.verb === "READ") return false;  // the monitor's and modbus_client.py's own reads
   if (focus && e.dp !== focus) return false;
   if (slaveF != null && e.unit !== slaveF) return false;
@@ -658,7 +905,7 @@ function renderLog(lines, force) {
   const entries = lines.map(parse).filter(keep).reverse().slice(0, 300);
   const fresh = new Set(lines);
   $("#list").innerHTML = entries.length ? entries.map(e => rowHtml(e, !firstLog && !seenLines.has(e.raw))).join("")
-    : `<div class="empty">${focus ? "Nothing for " + esc(focus) + " in the recent log." : slaveF != null ? "Nothing from slave " + slaveF + " in the recent log." : "No activity yet."}</div>`;
+    : `<div class="empty">${focus ? "Nothing for " + esc(focus) + " in the recent log." : slaveF != null ? "Nothing from " + esc(cur ? cur.name : "this device") + " in the recent log." : "No activity yet."}</div>`;
   seenLines = fresh; firstLog = false;
   document.querySelectorAll(".dpn[data-dp]").forEach(e => e.onclick = () => setFocus(e.dataset.dp));
 }
@@ -676,7 +923,7 @@ function setSlave(u) {
   document.querySelectorAll("#slaveSeg button").forEach(b => b.classList.toggle("on", b.dataset.u === (u == null ? "" : String(u))));
   tick(true);
 }
-function select(n) { sel = n; focus = null; slaveF = null; $("#focusChip").innerHTML = ""; lastVals = {}; firstLog = true; try { localStorage.setItem("sel", n); } catch (e) {} history.replaceState(null, "", "#" + n); tick(true); }
+function select(n) { sel = n; focus = null; $("#focusChip").innerHTML = ""; lastVals = {}; firstLog = true; try { localStorage.setItem("sel", n); } catch (e) {} history.replaceState(null, "", "#" + n); tick(true); }
 
 async function tick(force) {
   if (paused && !force) return;
@@ -687,10 +934,15 @@ async function tick(force) {
       $("#tabs").innerHTML = ""; $("#port").innerHTML = `<div class="notice">No simulated ports yet. Load a Studio project from the terminal: <code>python3 studio_to_init.py &lt;project.json&gt;</code>, then <code>./run.sh all</code>.</div>`;
       $("#cards").innerHTML = ""; $("#list").innerHTML = ""; return;
     }
-    if (!ports.some(p => p.name === sel)) sel = ports[0].name;
-    const p = ports.find(x => x.name === sel);
-    renderTabs(); renderPort(p); renderCards(p);
-    const lg = await api(`/api/log/${encodeURIComponent(sel)}?n=600`);
+    const gs = groups();
+    if (!gs.includes(sel)) { const old = ports.find(p => p.name === sel); sel = old ? (old.group || old.port) : gs[0]; }
+    const devs = devicesOf(sel);
+    const d = devs.find(x => x.key === devSel[sel]) || devs[0];
+    if (!cur || cur.key !== d.key) { lastVals = {}; firstLog = true; }
+    cur = d; slaveF = d.unit;
+    const p = d.p;
+    renderTabs(); renderDevPick(devs); renderPort(p, d); renderCards(p, d);
+    const lg = await api(`/api/log/${encodeURIComponent(p.name)}?n=600`);
     renderLog(lg.lines, force);
     $("#live").className = "live" + (paused ? " paused" : "");
     $("#liveText").textContent = paused ? "Paused" : "Live · " + new Date().toLocaleTimeString();

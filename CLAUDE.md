@@ -82,3 +82,5 @@ Report a table of device × DP with the value sent, the value stored and ✅/❌
 On CA111111 only: MC protocol in `~/mc-sim` (`./run.sh <name> <port>`, `mc_client.py`) and EtherNet/IP in
 `~/eip-sim` (`eip_attr_sim.py --model <file>`, 127.0.0.1:44818 only, since the PortaCON's own EIP service holds
 the LAN port).
+The web monitor shows running MC and EIP simulators under the **TCP** tab, next to the Modbus TCP devices. Give MC
+tags a `"device": "<name>"` and EIP attributes a `"name": "dp163 (<device name>)"` so they show under the right name.
