@@ -21,6 +21,8 @@ claude
 Fill this in and paste it, **one line per DP**:
 
 ```text
+Example:
+
 PortaCON <ip>, COM1 (or Modbus TCP), slave 1.
 dp160: input register 200, FLOAT32, 1000 ms, read FC04, send 0.125
 dp163: holding register 220, INT16, 1000 ms, read FC03 / write FC06, send 12345
@@ -28,7 +30,7 @@ dp163: holding register 220, INT16, 1000 ms, read FC03 / write FC06, send 12345
 
 Claude sets up the simulator and tells you what to enter in Porta Studio.
 
-## 3. Porta Studio
+## 3. How to Set up Porta Studio
 
 - **RTU:** 프로필 → COM1 설정 → 포트 경로 = `/home/portacon/modbus-plc-simulator/ttyCOM1`
   > ⚠️ No spaces. Check it after every deploy.
