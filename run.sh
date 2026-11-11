@@ -5,7 +5,8 @@
 #   ./run.sh stop sp1 | stop all
 #   ./run.sh reset sp1 | reset all            back to the file's starting values (and zero write counts), restarting
 #   ./run.sh status                           which are running, and on what
-#   ./run.sh ui / ./run.sh stop ui            web monitor (read-only) on port 8080 (./run.sh ui --port 8081 for another port)
+#   ./run.sh ui / ./run.sh stop ui            web monitor (read-only) at http://portacon-simulator.local:8080
+#                                             (--name lab-sim for another .local name, --port 8081 for another port)
 #   ./run.sh silent com2 60                   no replies for 60 s (device down), without a restart; silent com2 0 ends it
 #   ./run.sh boot                             start whatever was running before a reboot (cron runs this @reboot)
 # Values and write counts are kept across restarts in <name>.state.json.
@@ -21,6 +22,7 @@ launcher=(nohup)
 command -v setsid >/dev/null && launcher=(setsid nohup)   # setsid exists on Linux, not macOS
 
 stop() {
+  [ "$1" = ui ] && running mdns && { kill "$(cat mdns.pid)"; rm -f mdns.pid; }
   if running "$1"; then kill "$(cat "$1.pid")"; echo "stopped $1"; sleep 0.3; else echo "$1 is not running"; fi
   rm -f "$1.pid"
   unwant "$1"
@@ -83,12 +85,24 @@ case "$1" in
     exit 0 ;;
   ui)
     shift
+    # --name: the .local name the monitor is published under (mDNS), kept in ui.name for ./run.sh boot
+    if [ "$1" = --name ]; then echo "${2:?usage: ./run.sh ui --name <name>}" >ui.name; shift 2; fi
+    mdns_name=$(cat ui.name 2>/dev/null || echo portacon-simulator)
     running ui && { kill "$(cat ui.pid)"; sleep 1; }
+    running mdns && { kill "$(cat mdns.pid)"; sleep 0.3; }
+    lan_ip=$(ip route get 1.1.1.1 2>/dev/null | grep -o 'src [0-9.]*' | cut -d' ' -f2)
+    if command -v avahi-publish >/dev/null && [ -n "$lan_ip" ]; then
+      "${launcher[@]}" avahi-publish -a -R "$mdns_name.local" "$lan_ip" >>mdns.log 2>&1 </dev/null &
+      echo $! >mdns.pid
+    fi
     "${launcher[@]}" python3 -u webui.py "$@" >>ui.log 2>&1 </dev/null &
     echo $! >ui.pid
     want ui
     sleep 1
-    if running ui; then tail -n 1 ui.log; else echo "ui failed to start:"; tail -n 5 ui.log; rm -f ui.pid; exit 1; fi
+    if running ui; then
+      tail -n 1 ui.log
+      running mdns && grep -q "Established" <(tail -n 2 mdns.log) && echo "ui: also at http://$mdns_name.local:8080"
+    else echo "ui failed to start:"; tail -n 5 ui.log; rm -f ui.pid; exit 1; fi
     exit 0 ;;
 esac
 

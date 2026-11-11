@@ -10,7 +10,7 @@ values they want, tell them what to enter in Porta Studio, and, after they deplo
 | PortaCON | `ssh portacon@<ip>` (office unit: CA111111, `192.168.10.97`). Never use `sudo`. |
 | Simulator | `~/modbus-plc-simulator` on the PortaCON, installed by `./remote.sh portacon@<ip> install` |
 | One config per port | `machines/<name>.init.json` on the PortaCON (gitignored; never edit the copies in this repo) |
-| Web monitor | `http://<ip>:8080`, read-only |
+| Web monitor | `http://portacon-simulator.local:8080` (mDNS name, `./run.sh ui --name <x>` to change) or `http://<ip>:8080`; read-only |
 | ptcsw | `/home/portacon/workspace/ptcsw` (root, runs under `ptc_auto_service`) |
 
 **Never touch** ptcsw, `~/workspace/application.json` or `~/modbus-sim`. The user deploys from Porta Studio.

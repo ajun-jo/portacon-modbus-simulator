@@ -4,7 +4,7 @@
 #   ./remote.sh <host> stop all  | stop com1
 #   ./remote.sh <host> reset all | reset com1         back to the starting values and zero write counts
 #   ./remote.sh <host> install                       once per PortaCON: copy, start the web monitor, restart after reboots
-#   ./remote.sh <host> ui                            copy the simulator there and start the web UI: http://<ip>:8080
+#   ./remote.sh <host> ui                            copy the simulator there and start the web UI: http://portacon-simulator.local:8080
 #   ./remote.sh <host> status
 #   ./remote.sh <host> show wind1 | get wind1 투입수 | set wind1 투입수=5000 "단선 1-3=1"
 #   ./remote.sh <host> read hr 22400 --sim wind1     (and write: raw access, as in modbus_client.py)
@@ -68,11 +68,11 @@ case $cmd in
     # cron (no sudo needed) runs ./run.sh boot after every reboot, e.g. the one after a config-only deploy
     remote "(crontab -l 2>/dev/null | grep -v 'modbus-plc-simulator && ./run.sh boot'; echo '@reboot sleep 10; cd \$HOME/$DIR && ./run.sh boot >>boot.log 2>&1') | crontab -"
     remote "crontab -l | grep 'run.sh boot'"
-    echo "installed. Watch it at http://${host#*@}:8080; set up DPs from the terminal (or Claude Code)." ;;
+    echo "installed. Watch it at http://portacon-simulator.local:8080 (or http://${host#*@}:8080); set up DPs from the terminal (or Claude Code)." ;;
   ui)
     deploy
     remote "./run.sh ui$(q "$@")"
-    echo "open http://${host#*@}:8080 in a browser (or the --port you gave)" ;;
+    echo "open http://portacon-simulator.local:8080 (or http://${host#*@}:8080) in a browser (or the --port you gave)" ;;
   status) remote "./run.sh status" ;;
   show|get|set|read|write|reset-counts) remote "python3 modbus_client.py$(q "$cmd" "$@")" ;;
   log)

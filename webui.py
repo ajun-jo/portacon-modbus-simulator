@@ -203,7 +203,7 @@ PAGE = r"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Modbus Simulator</title>
+<title>PortaCON Simulator</title>
 <style>
 :root {
   /* soft charcoal, off-white text, muted accents: low contrast between surfaces, enough for text */
@@ -447,7 +447,7 @@ footer { margin-top: 34px; }
 <body>
 <header><div class="bar">
   <div class="logo">MB</div>
-  <div class="brand"><h1>Modbus Simulator</h1><p>Live monitor · configure from the terminal</p></div>
+  <div class="brand"><h1>PortaCON Simulator</h1><p>Live monitor · configure from the terminal</p></div>
   <div class="spacer"></div>
   <div class="live" id="live"><span class="pulse"></span><span id="liveText">Connecting…</span></div>
   <button class="btn" id="pause" title="Freeze the screen to read it">Pause</button>

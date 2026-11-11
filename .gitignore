@@ -21,3 +21,4 @@ machines/tcp*.init.json
 *.writes.log.1
 *.reset.json
 *.silent.json
+ui.name

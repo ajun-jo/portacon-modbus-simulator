@@ -39,6 +39,6 @@ Claude sets up the simulator and tells you what to enter in Porta Studio.
 
 ## 4. Check
 
-Build and deploy, then ask Claude to **"check the values"**. Watch it live at `http://<ip>:8080`.
+Build and deploy, then ask Claude to **"check the values"**. Watch it live at **`http://portacon-simulator.local:8080`** (or `http://<ip>:8080`).
 
 To update: `git pull`, then run the `install` line again.
