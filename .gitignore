@@ -22,3 +22,4 @@ machines/tcp*.init.json
 *.reset.json
 *.silent.json
 ui.name
+external.json

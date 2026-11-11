@@ -14,6 +14,7 @@ import argparse
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -142,17 +143,18 @@ def overview():
             ports.append({"name": n, "title": n, "port": n.upper(), "error": str(ex), "running": False, "dps": []})
     for sim in other_sims().values():
         try:
-            ports.append(sim["view"]())
+            ports.append(sim["view"](sim["pid"] is not None))
         except Exception as ex:  # a half-written file shouldn't break the page
             ports.append({"name": sim["name"], "title": sim["name"], "port": "TCP", "group": "TCP",
-                          "proto": sim["proto"], "error": str(ex), "running": True, "dps": []})
+                          "proto": sim["proto"], "error": str(ex), "running": sim["pid"] is not None, "dps": []})
     return {"ports": ports, "now": time.time()}
 
 
 # ---------------------------------------------------------------- MC protocol and EtherNet/IP simulators
 # Those simulators aren't part of this repo (mc_plc_sim.py, eip_attr_sim.py). The monitor shows the ones that are
-# running on this machine, found by process name, read-only: values from their state/model files and ptcsw's
-# requests from their logs, turned into the same log line format as the Modbus simulator's.
+# running on this machine, found by process name and remembered in external.json so Start can bring them back:
+# values from their state/model files and ptcsw's requests from their logs, turned into the same log line format as
+# the Modbus simulator's.
 
 def _proc_args(pid):
     try:
@@ -169,11 +171,34 @@ def _opt(args, name, default=None):
     return args[args.index(name) + 1] if name in args and args.index(name) + 1 < len(args) else default
 
 
+EXTERNAL = os.path.join(HERE, "external.json")  # how each MC / EIP simulator was last started, for Start
+
+
+def _ext_build(name, args, cwd, out):
+    script = next((os.path.basename(a) for a in args[:3] if a.endswith(".py")), "")
+    if script == "mc_plc_sim.py":
+        init = os.path.join(cwd, _opt(args, "--init", ""))
+        return _mc_sim(name, init, os.path.join(cwd, _opt(args, "--state", "")), out, int(_opt(args, "--port", 0) or 0))
+    model = os.path.join(cwd, _opt(args, "--model", "model.json"))
+    return _eip_sim(name, model, out, _opt(args, "--host", "0.0.0.0"), int(_opt(args, "--port", 44818)))
+
+
+def _ext_name(args, cwd):
+    script = next((os.path.basename(a) for a in args[:3] if a.endswith(".py")), "")
+    if script == "mc_plc_sim.py":
+        return "mc-" + os.path.basename(_opt(args, "--init", "")).split(".")[0]
+    if script == "eip_attr_sim.py":
+        return "eip-" + os.path.basename(_opt(args, "--model", "model.json")).split(".")[0]
+    return None
+
+
 def other_sims():
-    """{name: {"name", "proto", "view": fn, "log": fn}} for each running MC / EtherNet/IP simulator."""
-    sims = {}
+    """{name: {"name", "proto", "view": fn, "log": fn, "pid", "launch"}} for each MC / EtherNet/IP simulator: the
+    running ones (found by process), plus ones seen running before and stopped since (from external.json)."""
+    sims, known = {}, read_json(EXTERNAL, {})
     if not os.path.isdir("/proc"):
         return sims
+    changed = False
     for pid in os.listdir("/proc"):
         if not pid.isdigit():
             continue
@@ -181,17 +206,58 @@ def other_sims():
         if not got:
             continue
         args, cwd, out = got
-        script = next((os.path.basename(a) for a in args[:3] if a.endswith(".py")), "")
-        if script == "mc_plc_sim.py":
-            init = os.path.join(cwd, _opt(args, "--init", ""))
-            name = "mc-" + os.path.basename(init).split(".")[0]
-            sims[name] = _mc_sim(name, init, os.path.join(cwd, _opt(args, "--state", "")), out,
-                                 int(_opt(args, "--port", 0) or 0))
-        elif script == "eip_attr_sim.py":
-            model = os.path.join(cwd, _opt(args, "--model", "model.json"))
-            name = "eip-" + os.path.basename(model).split(".")[0]
-            sims[name] = _eip_sim(name, model, out, _opt(args, "--host", "0.0.0.0"), int(_opt(args, "--port", 44818)))
+        args = [a for a in args if a != ""]
+        name = _ext_name(args, cwd)
+        if not name:
+            continue
+        launch = {"args": args, "cwd": cwd, "out": out}
+        if known.get(name) != launch:
+            known[name], changed = launch, True
+        sims[name] = dict(_ext_build(name, args, cwd, out), pid=int(pid), launch=launch)
+    for name, launch in known.items():
+        if name not in sims:
+            sims[name] = dict(_ext_build(name, launch["args"], launch["cwd"], launch["out"]), pid=None, launch=launch)
+    if changed:
+        try:
+            with open(EXTERNAL + ".tmp", "w") as f:
+                json.dump(known, f, indent=1)
+            os.replace(EXTERNAL + ".tmp", EXTERNAL)
+        except OSError:
+            pass
     return sims
+
+
+def ext_action(sim, action):
+    """Start or stop an MC / EIP simulator with the command it was last started with. Returns (ok, message)."""
+    launch, pid = sim["launch"], sim["pid"]
+    pidfile = os.path.join(launch["cwd"], sim["name"].split("-", 1)[1] + ".pid")  # what their run.sh uses
+    if action == "stop":
+        if pid is None:
+            return True, "%s is not running" % sim["name"]
+        os.kill(pid, signal.SIGTERM)
+        for _ in range(30):
+            if not os.path.exists("/proc/%d" % pid):
+                break
+            time.sleep(0.1)
+        else:
+            os.kill(pid, signal.SIGKILL)
+        return True, "stopped %s" % sim["name"]
+    if pid is not None:
+        return True, "%s is already running" % sim["name"]
+    out = launch["out"] or os.path.join(launch["cwd"], sim["name"].split("-", 1)[1] + ".log")
+    # through sh with &, so the simulator isn't the monitor's child (no zombie when it exits) and outlives it
+    p = subprocess.run(["sh", "-c", 'setsid nohup "$@" >>"$OUT" 2>&1 </dev/null & echo $!', "sh"] + launch["args"],
+                       cwd=launch["cwd"], env=dict(os.environ, OUT=out), capture_output=True, text=True, timeout=10)
+    new_pid = p.stdout.strip()
+    try:
+        with open(pidfile, "w") as f:
+            f.write(new_pid + "\n")
+    except OSError:
+        pass
+    time.sleep(1.5)
+    if not new_pid.isdigit() or not os.path.exists("/proc/" + new_pid):
+        return False, "%s exited right away: %s" % (sim["name"], " | ".join(tail(out, 3)) or p.stderr.strip())
+    return True, "started %s (pid %s)" % (sim["name"], new_pid)
 
 
 def _iso_ago(ts, now):
@@ -201,7 +267,7 @@ def _iso_ago(ts, now):
         return None
 
 
-def _ext_view(name, proto, port, title, dps, lines, now, conv):
+def _ext_view(name, proto, port, title, dps, lines, now, conv, running=True, label=None):
     """A port-like dict for the page, with read_ago per DP and the newest poll, from converted log lines."""
     last, poll = {}, None
     for line in lines:
@@ -213,9 +279,10 @@ def _ext_view(name, proto, port, title, dps, lines, now, conv):
     for d in dps:
         if d["dp"] in last:
             d["read_ago"] = _iso_ago(last[d["dp"]], now)
-    ago = _iso_ago(poll, now) if poll else None
+    ago = _iso_ago(poll, now) if poll and running else None
     return {"name": name, "title": title, "port": "TCP", "group": "TCP", "proto": proto, "kind": "tcp",
-            "tcp": port, "framing": None, "running": True, "controllable": False,
+            "tcp": port, "framing": None, "running": running, "controllable": True, "external": True,
+            "label": label or name,
             "poll": {"ago": ago} if ago is not None else None, "silent_left": 0, "dps": dps}
 
 
@@ -261,7 +328,7 @@ def _mc_sim(name, init, state, log, port):
                           frame, op, dev, start, count))
         return out or ["%s %s" % (ts, line.split(" ", 1)[1])]
 
-    def view():
+    def view(running=True):
         now = time.time()
         st = read_json(state, {})
         words, bits = st.get("words", {}), st.get("bits", {})
@@ -282,7 +349,8 @@ def _mc_sim(name, init, state, log, port):
                 row["value"], row["error"] = None, str(ex)
             dps.append(row)
         dev = next((d["device"] for d in dps), "MC Protocol")
-        return _ext_view(name, "MC Protocol", port, dev, dps, tail(log, 400) if log else [], now, conv)
+        return _ext_view(name, "MC Protocol", port, dev, dps, tail(log, 400) if log else [], now, conv,
+                         running, "MC :%d" % port)
 
     return {"name": name, "proto": "MC Protocol", "view": view,
             "log": lambda n: [x for line in (tail(log, n) if log else []) for x in conv(line)][-n:]}
@@ -327,13 +395,14 @@ def _eip_sim(name, model, log, host, port):
                        % (ts, verb, "%s = %s" % (dp, v), "ptcsw", at, op, "%s %s" % (typ, at), peer))
         return out
 
-    def view():
+    def view(running=True):
         now = time.time()
         dps = [{"dp": dp, "unit": 1, "device": device, "table": "", "addr": at, "bit": None, "type": typ,
                 "words": 1, "pending": False, "expression": "", "report_ms": None, "write_only": False, "writes": 0,
                 "value": value, "iotlink": value} for _, dp, device, typ, value, at in entries()]
         dev = next((d["device"] for d in dps), "EtherNet/IP")
-        return _ext_view(name, "EtherNet/IP", port, dev, dps, tail(log, 400) if log else [], now, conv)
+        return _ext_view(name, "EtherNet/IP", port, dev, dps, tail(log, 400) if log else [], now, conv,
+                         running, "EIP :%d" % port)
 
     return {"name": name, "proto": "EtherNet/IP", "view": view, "host": host,
             "log": lambda n: [x for line in (tail(log, n) if log else []) for x in conv(line)][-n:]}
@@ -385,7 +454,17 @@ class Handler(BaseHTTPRequestHandler):
             return self.refuse()
         name, action = parts[2], parts[3]
         if name not in machine_names():
-            return self.send(404, {"error": "no simulator %r" % name})
+            sim = other_sims().get(name)
+            if not sim:
+                return self.send(404, {"error": "no simulator %r" % name})
+            try:
+                ok, out = ext_action(sim, action)
+            except Exception as ex:
+                return self.send(500, {"error": "%s: %s" % (type(ex).__name__, ex)})
+            running = other_sims()[name]["pid"] is not None
+            if not ok or (action == "start") != running:
+                return self.send(500, {"error": out, "running": running})
+            return self.send(200, {"output": out, "running": running})
         try:
             args = ["./run.sh", name] if action == "start" else ["./run.sh", "stop", name]
             p = subprocess.run(args, cwd=HERE, capture_output=True, text=True, timeout=60)
@@ -817,23 +896,25 @@ function renderPort(p, d) {
     <div class="sub"><span><span class="dot ${cls}" style="display:inline-block;margin-right:6px"></span>${esc(txt)}</span>
     ${protoBadge(d.proto)}${ep}</div>
     </div>${notice}`;
+  const lbl = p.label || p.port;
   $("#ctl").innerHTML = p.error || p.controllable === false ? "" : p.running
-      ? `<button class="act stop" id="simBtn" data-a="stop">■ Stop ${esc(p.port)}</button>`
-      : `<button class="act start" id="simBtn" data-a="start">▶ Start ${esc(p.port)}</button>`;
+      ? `<button class="act stop" id="simBtn" data-a="stop">■ Stop ${esc(lbl)}</button>`
+      : `<button class="act start" id="simBtn" data-a="start">▶ Start ${esc(lbl)}</button>`;
   const b = $("#simBtn"); if (b) b.onclick = () => simAction(p, b.dataset.a, b);
   document.querySelectorAll("[data-copy]").forEach(e => e.onclick = () => { navigator.clipboard && navigator.clipboard.writeText(e.dataset.copy); toast("Path copied"); });
 }
 
 async function simAction(p, action, btn) {
   const others = devicesOf(p.group || p.port).filter(d => d.p.name === p.name).length;
-  if (action === "stop" && !confirm(`Stop ${p.port} (${p.name})?\n\nptcsw gets no answers ${others > 1 ? "from all " + others + " devices on this simulator" : "from it"} until you start it again, so its values stop updating in IoTLink. It also stays stopped after a reboot.`)) return;
+  const lbl = p.label || p.port;
+  if (action === "stop" && !confirm(`Stop ${lbl} (${p.name})?\n\nptcsw gets no answers ${others > 1 ? "from all " + others + " devices on this simulator" : "from it"} until you start it again, so its values stop updating in IoTLink.${p.external ? "" : " It also stays stopped after a reboot."}`)) return;
   btn.disabled = true; btn.textContent = action === "stop" ? "Stopping…" : "Starting…";
   try {
     const r = await fetch(`/api/sim/${encodeURIComponent(p.name)}/${action}`, {method: "POST"});
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || r.statusText);
-    toast(`${p.port} ${action === "stop" ? "stopped" : "started"}`);
-  } catch (e) { toast(`Couldn't ${action} ${p.port}: ${e.message}`); }
+    toast(`${lbl} ${action === "stop" ? "stopped" : "started"}`);
+  } catch (e) { toast(`Couldn't ${action} ${lbl}: ${e.message}`); }
   tick(true);
 }
 
