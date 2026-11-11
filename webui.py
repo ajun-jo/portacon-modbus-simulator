@@ -477,15 +477,27 @@ header { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, va
 .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--off); }
 .dot.ok { background: var(--green); } .dot.idle { background: var(--amber); } .dot.bad { background: var(--red); }
 
-/* device picker: one device at a time when a port has several */
-.devpick { display: flex; flex-wrap: wrap; gap: 8px; margin: -8px 0 20px; }
-.devpick:empty { display: none; }
-.dv { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-radius: 999px; cursor: pointer;
-  border: 1px solid var(--line); background: transparent; text-align: left; }
-.dv:hover { border-color: var(--line-2); }
-.dv.on { border-color: color-mix(in srgb, var(--violet) 55%, transparent); background: var(--violet-bg); }
-.dv b { font-weight: 600; font-size: 13px; }
-.dv small { color: var(--muted); font-size: 11px; }
+/* port panel: the selected port (level 1), its device sub-tabs (level 2), then the selected device */
+.portbox { background: var(--panel); border-radius: 14px; box-shadow: var(--shadow); padding: 4px 20px 16px; margin-bottom: 6px; }
+.porthead { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; padding: 14px 0 2px; }
+.porthead b { font-size: 18px; font-weight: 600; }
+.porthead small { color: var(--muted); font-size: 12px; }
+.lvl { font: 600 10.5px var(--sans); text-transform: uppercase; letter-spacing: .8px; color: var(--dim); }
+.devrow { display: flex; align-items: flex-end; gap: 14px; border-bottom: 1px solid var(--line); margin: 8px 0 16px; }
+.devrow .lvl { padding-bottom: 12px; }
+.devpick { display: flex; gap: 22px; overflow-x: auto; }
+.dv { display: flex; align-items: center; gap: 8px; padding: 9px 2px 10px; cursor: pointer; white-space: nowrap;
+  border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; text-align: left; margin-bottom: -1px; }
+.dv b { font-weight: 500; font-size: 13.5px; color: var(--muted); }
+.dv small { color: var(--dim); font-size: 11px; }
+.dv:hover b { color: var(--text); }
+.dv.on { border-bottom-color: var(--blue); }
+.dv.on b { color: var(--text); font-weight: 600; }
+.proto.rtu { color: var(--teal); background: var(--teal-bg); }
+.proto.mbtcp { color: var(--blue); background: var(--blue-bg); }
+.proto.mc { color: var(--amber); background: var(--amber-bg); }
+.proto.eip { color: var(--violet); background: var(--violet-bg); }
+.dv .proto { font-size: 10.5px; padding: 1px 7px; }
 .proto { font: 600 11px var(--sans); color: var(--violet); background: var(--violet-bg); padding: 2px 8px; border-radius: 6px; }
 
 /* port header */
@@ -668,8 +680,11 @@ footer { margin-top: 34px; }
 
 <div class="wrap">
   <nav class="tabs" id="tabs"></nav>
-  <div class="devpick" id="devpick"></div>
-  <div id="port"></div>
+  <section class="portbox">
+    <div class="porthead" id="porthead"></div>
+    <div class="devrow"><span class="lvl">Device</span><div class="devpick" id="devpick"></div></div>
+    <div id="port"></div>
+  </section>
 
   <div class="sec"><h3>Data points</h3><span id="dpCount"></span></div>
   <div id="cards"></div>
@@ -736,6 +751,8 @@ function portState(p) {
 
 async function api(u) { const r = await fetch(u, {cache: "no-store"}); if (!r.ok) throw new Error((await r.json()).error || r.statusText); return r.json(); }
 
+function protoCls(x) { return /RTU|ASCII/.test(x) ? "rtu" : /Modbus/.test(x) ? "mbtcp" : /MC/.test(x) ? "mc" : /Ether/.test(x) ? "eip" : ""; }
+function protoBadge(x) { return x ? `<span class="proto ${protoCls(x)}">${esc(x)}</span>` : ""; }
 function groups() { return [...new Set(ports.map(p => p.group || p.port))]; }
 function devicesOf(g) {
   return ports.filter(p => (p.group || p.port) === g).flatMap(p => {
@@ -758,7 +775,8 @@ function renderTabs() {
     const devs = devicesOf(g), sts = devs.map(devState);
     const cls = sts.some(x => x[0] === "bad") ? "bad" : sts.every(x => x[0] === "ok") ? "ok" : sts.some(x => x[0] === "ok") ? "ok" : "idle";
     const nDp = devs.reduce((n, d) => n + d.dps.length, 0);
-    const txt = devs.length > 1 ? `${devs.length} devices` : (sts[0] || ["", ""])[1];
+    const protos = [...new Set(devs.map(d => d.proto).filter(Boolean))];
+    const txt = (devs.length > 1 ? `${devs.length} devices` : (sts[0] || ["", ""])[1]) + (protos.length ? " · " + protos.join(", ") : "");
     return `<button class="tab ${g === sel ? "on" : ""}" data-n="${esc(g)}"><span class="dot ${cls}"></span>
       <span><b>${esc(g)}</b><small>${esc(txt)} · ${nDp} DP${nDp === 1 ? "" : "s"}</small></span></button>`;
   }).join("");
@@ -766,12 +784,14 @@ function renderTabs() {
 }
 function renderDevPick(devs) {
   const el = $("#devpick");
-  if (devs.length < 2) { el.innerHTML = ""; return; }
+  const nDp = devs.reduce((n, d) => n + d.dps.length, 0);
+  const eps = [...new Set(devs.map(d => d.p.kind === "pty" ? d.p.link : d.p.tcp ? ":" + d.p.tcp : "").filter(Boolean))];
+  $("#porthead").innerHTML = `<span class="lvl">Port</span><b>${esc(sel)}</b><small>${devs.length} device${devs.length === 1 ? "" : "s"} · ${nDp} DP${nDp === 1 ? "" : "s"}${eps.length && devs[0].p.kind !== "pty" ? " · ports " + esc(eps.join(", ")) : ""}</small>`;
   el.innerHTML = devs.map(d => {
     const [cls, txt] = devState(d);
     const at = d.p.kind === "pty" ? `slave ${d.unit}` : d.p.tcp ? `:${d.p.tcp}` : "";
     return `<button class="dv ${cur && d.key === cur.key ? "on" : ""}" data-k="${esc(d.key)}" title="${esc(txt)}"><span class="dot ${cls}"></span>
-      <span><b>${esc(d.name)}</b> <small>${esc(d.proto)}${at ? " · " + esc(at) : ""} · ${d.dps.length} DP${d.dps.length === 1 ? "" : "s"}</small></span></button>`;
+      <b>${esc(d.name)}</b>${protoBadge(d.proto)}${at ? `<small>${esc(at)}</small>` : ""}</button>`;
   }).join("");
   el.querySelectorAll(".dv").forEach(b => b.onclick = () => pickDev(b.dataset.k));
 }
@@ -790,9 +810,9 @@ function renderPort(p, d) {
   else if (!p.running) notice = `<div class="notice bad"><b>${esc(p.name)} is stopped</b>, so ptcsw gets no answers on this port. Use <b>Start</b> above when you want it back.</div>`;
   else if (p.silent_left) notice = `<div class="notice warn">Simulating a dead device: no replies for another ${p.silent_left} s.</div>`;
   else if (!p.poll) notice = `<div class="notice">Waiting for ptcsw. If nothing arrives, check that 포트 경로 for ${esc(p.port)} in Porta Studio is exactly the path above.</div>`;
-  $("#port").innerHTML = `<div class="port"><div><h2>${esc(d.name)} <span style="color:var(--muted);font-weight:500;font-size:15px">${esc(p.port)}${d.unit != null && p.kind === "pty" ? " · slave " + d.unit : ""}</span></h2></div>
+  $("#port").innerHTML = `<div class="port"><div><h2 style="font-size:17px">${esc(d.name)}${d.unit != null && p.kind === "pty" ? ` <span style="color:var(--muted);font-weight:500;font-size:14px">slave ${d.unit}</span>` : ""}</h2></div>
     <div class="sub"><span><span class="dot ${cls}" style="display:inline-block;margin-right:6px"></span>${esc(txt)}</span>
-    ${d.proto ? `<span class="proto">${esc(d.proto)}</span>` : ""}${ep}</div>
+    ${protoBadge(d.proto)}${ep}</div>
     ${p.error || p.controllable === false ? "" : `<div class="ctl">${p.running
       ? `<button class="act stop" id="simBtn" data-a="stop">■ Stop ${esc(p.port)}</button>`
       : `<button class="act start" id="simBtn" data-a="start">▶ Start ${esc(p.port)}</button>`}</div>`}</div>${notice}`;
