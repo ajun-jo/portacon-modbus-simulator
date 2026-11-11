@@ -56,7 +56,7 @@ case "$1" in
       ep=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("endpoint") or "tcp:%s" % json.load(open(sys.argv[1])).get("port"))' "machines/$name.init.json" 2>/dev/null)
       if running "$name"; then echo "$name: running (pid $(cat "$name.pid")) on $ep"; else echo "$name: stopped ($ep)"; fi
     done
-    running ui && echo "ui: running (pid $(cat ui.pid)), $(tail -n 1 ui.log | cut -d' ' -f2-)"
+    running ui && echo "ui: running (pid $(cat ui.pid)), $(grep 'web UI on' ui.log | tail -n 1 | cut -d' ' -f2-)"
     exit 0 ;;
   stop)
     shift; [ $# -gt 0 ] || { echo "usage: ./run.sh stop <name>... | all"; exit 1; }
@@ -100,7 +100,7 @@ case "$1" in
     want ui
     sleep 1
     if running ui; then
-      tail -n 1 ui.log
+      grep 'web UI on' ui.log | tail -n 1
       running mdns && grep -q "Established" <(tail -n 2 mdns.log) && echo "ui: also at http://$mdns_name.local:8080"
     else echo "ui failed to start:"; tail -n 5 ui.log; rm -f ui.pid; exit 1; fi
     exit 0 ;;

@@ -184,7 +184,9 @@ def _ext_build(name, args, cwd, out):
 
 
 def _ext_name(args, cwd):
-    script = next((os.path.basename(a) for a in args[:3] if a.endswith(".py")), "")
+    if not args or not os.path.basename(args[0]).startswith("python"):
+        return None  # not e.g. a grep for the script's name
+    script = next((os.path.basename(a) for a in args[1:3] if a.endswith(".py")), "")
     if script == "mc_plc_sim.py":
         return "mc-" + os.path.basename(_opt(args, "--init", "")).split(".")[0]
     if script == "eip_attr_sim.py":
@@ -214,7 +216,11 @@ def other_sims():
         if known.get(name) != launch:
             known[name], changed = launch, True
         sims[name] = dict(_ext_build(name, args, cwd, out), pid=int(pid), launch=launch)
-    for name, launch in known.items():
+    for name, launch in list(known.items()):
+        if not _ext_name(launch.get("args") or [], launch.get("cwd")):
+            del known[name]  # an entry from before the python check
+            changed = True
+            continue
         if name not in sims:
             sims[name] = dict(_ext_build(name, launch["args"], launch["cwd"], launch["out"]), pid=None, launch=launch)
     if changed:
@@ -408,6 +414,36 @@ def _eip_sim(name, model, log, host, port):
             "log": lambda n: [x for line in (tail(log, n) if log else []) for x in conv(line)][-n:]}
 
 
+def all_action(action):
+    """Start or stop every simulator. Starting leaves running ones alone. Returns (http status, body)."""
+    out, failed = [], []
+    names = [n for n in machine_names() if (pid_of(n) is None) == (action == "start")]
+    if names:
+        args = ["./run.sh"] + names if action == "start" else ["./run.sh", "stop"] + names
+        try:
+            p = subprocess.run(args, cwd=HERE, capture_output=True, text=True, timeout=120)
+            out.append((p.stdout + p.stderr).strip())
+        except Exception as ex:
+            out.append("%s: %s" % (type(ex).__name__, ex))
+    for sim in other_sims().values():
+        if (sim["pid"] is None) == (action == "start"):
+            try:
+                ok, msg = ext_action(sim, action)
+            except Exception as ex:
+                ok, msg = False, "%s: %s" % (type(ex).__name__, ex)
+            out.append(msg)
+    for n in machine_names():
+        if (pid_of(n) is not None) != (action == "start"):
+            failed.append(n)
+    for n, sim in other_sims().items():
+        if (sim["pid"] is not None) != (action == "start"):
+            failed.append(n)
+    text = "\n".join(x for x in out if x)
+    if failed:
+        return 500, {"error": "%s didn't %s. %s" % (", ".join(failed), action, text), "failed": failed}
+    return 200, {"output": text}
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "ModbusSimMonitor"
 
@@ -448,11 +484,16 @@ class Handler(BaseHTTPRequestHandler):
         self.send(405, {"error": "the monitor only starts and stops simulators; configure them from the terminal"})
 
     def do_POST(self):
-        """POST /api/sim/<name>/start or /stop: the same as ./run.sh <name> and ./run.sh stop <name>."""
+        """POST /api/sim/all/start or /stop: every simulator, Modbus, MC and EIP (the page's one button).
+        POST /api/sim/<name>/start or /stop: one simulator, the same as ./run.sh <name> and ./run.sh stop <name>."""
         parts = [p for p in self.path.split("?")[0].split("/") if p]
         if len(parts) != 4 or parts[:2] != ["api", "sim"] or parts[3] not in ("start", "stop"):
             return self.refuse()
         name, action = parts[2], parts[3]
+        print("%s %s %s from %s" % (datetime.now().isoformat(timespec="seconds"), action, name, self.client_address[0]),
+              flush=True)  # into ui.log, so it's clear who stopped what
+        if name == "all":
+            return self.send(*all_action(action))
         if name not in machine_names():
             sim = other_sims().get(name)
             if not sim:
@@ -566,7 +607,9 @@ header { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, va
 .devrow .lvl { padding-bottom: 12px; }
 .devpick { display: flex; gap: 22px; overflow-x: auto; scrollbar-width: none; }
 .devpick::-webkit-scrollbar { display: none; }
-.sec .ctl { align-self: center; }
+.simall { display: flex; gap: 8px; align-items: center; margin-right: 14px; }
+.simall small { color: var(--muted); font-size: 12px; }
+.simall .act { padding: 6px 13px; font-size: 12.5px; }
 .sec .act { padding: 6px 13px; font-size: 12.5px; }
 .dv { display: flex; align-items: center; gap: 8px; padding: 9px 2px 10px; cursor: pointer; white-space: nowrap;
   border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; text-align: left; margin-bottom: -1px; }
@@ -590,7 +633,6 @@ header { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, va
 .path { font: 12px var(--mono); color: var(--text); background: var(--panel-2); border: 1px solid var(--line);
   padding: 3px 8px; border-radius: 6px; cursor: copy; }
 .path:hover { border-color: var(--line-2); }
-.ctl { margin-left: auto; }
 .act { font: 600 13px var(--sans); border-radius: 9px; padding: 8px 16px; cursor: pointer; border: 1px solid; }
 .act.stop { color: var(--red); background: var(--red-bg); border-color: color-mix(in srgb, var(--red) 40%, transparent); }
 .act.stop:hover { background: color-mix(in srgb, var(--red) 22%, transparent); }
@@ -756,6 +798,7 @@ footer { margin-top: 34px; }
   <div class="logo">MB</div>
   <div class="brand"><h1>PortaCON Simulator</h1><p>Live monitor · configure from the terminal</p></div>
   <div class="spacer"></div>
+  <div class="simall" id="simAll"></div>
   <div class="live" id="live"><span class="pulse"></span><span id="liveText">Connecting…</span></div>
   <button class="btn" id="pause" title="Freeze the screen to read it">Pause</button>
 </div></header>
@@ -768,7 +811,7 @@ footer { margin-top: 34px; }
     <div id="port"></div>
   </section>
 
-  <div class="sec"><h3>Data points</h3><span id="dpCount"></span><div class="ctl" id="ctl"></div></div>
+  <div class="sec"><h3>Data points</h3><span id="dpCount"></span></div>
   <div id="cards"></div>
 
   <div class="sec"><h3>Live log</h3><span>newest first · click a DP to follow it</span></div>
@@ -889,32 +932,41 @@ function renderPort(p, d) {
                               : `<span class="mono">TCP port ${esc(p.tcp)}</span>`;
   let notice = "";
   if (p.error) notice = `<div class="notice bad">This simulator's file has an error: ${esc(p.error)}</div>`;
-  else if (!p.running) notice = `<div class="notice bad"><b>${esc(p.name)} is stopped</b>, so ptcsw gets no answers on this port. Use <b>Start</b> below when you want it back.</div>`;
+  else if (!p.running) notice = `<div class="notice bad"><b>${esc(p.name)} is stopped</b>, so ptcsw gets no answers from it. Use <b>Start simulator</b> at the top when you want it back.</div>`;
   else if (p.silent_left) notice = `<div class="notice warn">Simulating a dead device: no replies for another ${p.silent_left} s.</div>`;
   else if (!p.poll) notice = `<div class="notice">Waiting for ptcsw. If nothing arrives, check that 포트 경로 for ${esc(p.port)} in Porta Studio is exactly the path above.</div>`;
   $("#port").innerHTML = `<div class="port"><div><h2 style="font-size:17px">${esc(d.name)}${d.unit != null && p.kind === "pty" ? ` <span style="color:var(--muted);font-weight:500;font-size:14px">slave ${d.unit}</span>` : ""}</h2></div>
     <div class="sub"><span><span class="dot ${cls}" style="display:inline-block;margin-right:6px"></span>${esc(txt)}</span>
     ${protoBadge(d.proto)}${ep}</div>
     </div>${notice}`;
-  const lbl = p.label || p.port;
-  $("#ctl").innerHTML = p.error || p.controllable === false ? "" : p.running
-      ? `<button class="act stop" id="simBtn" data-a="stop">■ Stop ${esc(lbl)}</button>`
-      : `<button class="act start" id="simBtn" data-a="start">▶ Start ${esc(lbl)}</button>`;
-  const b = $("#simBtn"); if (b) b.onclick = () => simAction(p, b.dataset.a, b);
   document.querySelectorAll("[data-copy]").forEach(e => e.onclick = () => { navigator.clipboard && navigator.clipboard.writeText(e.dataset.copy); toast("Path copied"); });
 }
 
-async function simAction(p, action, btn) {
-  const others = devicesOf(p.group || p.port).filter(d => d.p.name === p.name).length;
-  const lbl = p.label || p.port;
-  if (action === "stop" && !confirm(`Stop ${lbl} (${p.name})?\n\nptcsw gets no answers ${others > 1 ? "from all " + others + " devices on this simulator" : "from it"} until you start it again, so its values stop updating in IoTLink.${p.external ? "" : " It also stays stopped after a reboot."}`)) return;
-  btn.disabled = true; btn.textContent = action === "stop" ? "Stopping…" : "Starting…";
+function renderSimAll() {
+  const sims = ports.filter(p => !p.error && p.controllable !== false);
+  const up = sims.filter(p => p.running).length, down = sims.length - up;
+  const start = `<button class="act start" data-a="start">▶ Start simulator</button>`;
+  const stop = `<button class="act stop" data-a="stop">■ Stop simulator</button>`;
+  const el = $("#simAll");
+  if (el.dataset.busy) return;
+  el.innerHTML = !sims.length ? "" : !up ? start : !down ? stop
+    : `<small>${down} of ${sims.length} stopped</small>${start.replace("Start simulator", "Start the rest")}${stop}`;
+  el.querySelectorAll("button").forEach(b => b.onclick = () => simAll(b.dataset.a, b));
+}
+
+async function simAll(action, btn) {
+  const n = groups().flatMap(devicesOf).length;
+  if (action === "stop" && !confirm(`Stop the simulator?\n\nAll ${n} devices on every port (Modbus, MC, EtherNet/IP) stop answering, so ptcsw gets no values from any of them until you start it again.`)) return;
+  const el = $("#simAll"); el.dataset.busy = 1;
+  el.querySelectorAll("button").forEach(b => b.disabled = true);
+  btn.textContent = action === "stop" ? "Stopping…" : "Starting…";
   try {
-    const r = await fetch(`/api/sim/${encodeURIComponent(p.name)}/${action}`, {method: "POST"});
+    const r = await fetch(`/api/sim/all/${action}`, {method: "POST"});
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || r.statusText);
-    toast(`${lbl} ${action === "stop" ? "stopped" : "started"}`);
-  } catch (e) { toast(`Couldn't ${action} ${lbl}: ${e.message}`); }
+    toast(`Simulator ${action === "stop" ? "stopped" : "started"}`);
+  } catch (e) { toast(`Couldn't ${action} everything: ${e.message}`); }
+  delete el.dataset.busy;
   tick(true);
 }
 
@@ -1046,7 +1098,7 @@ async function tick(force) {
     if (!cur || cur.key !== d.key) { lastVals = {}; firstLog = true; }
     cur = d; slaveF = d.unit;
     const p = d.p;
-    renderTabs(); renderDevPick(devs); renderPort(p, d); renderCards(p, d);
+    renderSimAll(); renderTabs(); renderDevPick(devs); renderPort(p, d); renderCards(p, d);
     const lg = await api(`/api/log/${encodeURIComponent(p.name)}?n=600`);
     renderLog(lg.lines, force);
     $("#live").className = "live" + (paused ? " paused" : "");

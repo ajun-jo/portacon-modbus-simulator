@@ -84,5 +84,7 @@ On CA111111 only: MC protocol in `~/mc-sim` (`./run.sh <name> <port>`, `mc_clien
 the LAN port).
 The web monitor shows running MC and EIP simulators under the **TCP** tab, next to the Modbus TCP devices. Give MC
 tags a `"device": "<name>"` and EIP attributes a `"name": "dp163 (<device name>)"` so they show under the right name.
-Once the monitor has seen one running, it remembers the command in `external.json`, so its Start/Stop button works
-and a stopped one stays listed. MC and EIP simulators don't come back after a reboot.
+Once the monitor has seen one running, it remembers the command in `external.json`, so a stopped one stays listed
+and the page's **Start simulator / Stop simulator** button (top right) covers it too. That button starts or stops
+every simulator at once (Modbus, MC, EIP); each press is logged in `ui.log` with the browser's IP. MC and EIP
+simulators don't come back after a reboot.
