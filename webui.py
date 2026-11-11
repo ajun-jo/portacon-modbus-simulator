@@ -485,7 +485,10 @@ header { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, va
 .lvl { font: 600 10.5px var(--sans); text-transform: uppercase; letter-spacing: .8px; color: var(--dim); }
 .devrow { display: flex; align-items: flex-end; gap: 14px; border-bottom: 1px solid var(--line); margin: 8px 0 16px; }
 .devrow .lvl { padding-bottom: 12px; }
-.devpick { display: flex; gap: 22px; overflow-x: auto; }
+.devpick { display: flex; gap: 22px; overflow-x: auto; scrollbar-width: none; }
+.devpick::-webkit-scrollbar { display: none; }
+.sec .ctl { align-self: center; }
+.sec .act { padding: 6px 13px; font-size: 12.5px; }
 .dv { display: flex; align-items: center; gap: 8px; padding: 9px 2px 10px; cursor: pointer; white-space: nowrap;
   border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; text-align: left; margin-bottom: -1px; }
 .dv b { font-weight: 500; font-size: 13.5px; color: var(--muted); }
@@ -686,7 +689,7 @@ footer { margin-top: 34px; }
     <div id="port"></div>
   </section>
 
-  <div class="sec"><h3>Data points</h3><span id="dpCount"></span></div>
+  <div class="sec"><h3>Data points</h3><span id="dpCount"></span><div class="ctl" id="ctl"></div></div>
   <div id="cards"></div>
 
   <div class="sec"><h3>Live log</h3><span>newest first · click a DP to follow it</span></div>
@@ -807,15 +810,16 @@ function renderPort(p, d) {
                               : `<span class="mono">TCP port ${esc(p.tcp)}</span>`;
   let notice = "";
   if (p.error) notice = `<div class="notice bad">This simulator's file has an error: ${esc(p.error)}</div>`;
-  else if (!p.running) notice = `<div class="notice bad"><b>${esc(p.name)} is stopped</b>, so ptcsw gets no answers on this port. Use <b>Start</b> above when you want it back.</div>`;
+  else if (!p.running) notice = `<div class="notice bad"><b>${esc(p.name)} is stopped</b>, so ptcsw gets no answers on this port. Use <b>Start</b> below when you want it back.</div>`;
   else if (p.silent_left) notice = `<div class="notice warn">Simulating a dead device: no replies for another ${p.silent_left} s.</div>`;
   else if (!p.poll) notice = `<div class="notice">Waiting for ptcsw. If nothing arrives, check that 포트 경로 for ${esc(p.port)} in Porta Studio is exactly the path above.</div>`;
   $("#port").innerHTML = `<div class="port"><div><h2 style="font-size:17px">${esc(d.name)}${d.unit != null && p.kind === "pty" ? ` <span style="color:var(--muted);font-weight:500;font-size:14px">slave ${d.unit}</span>` : ""}</h2></div>
     <div class="sub"><span><span class="dot ${cls}" style="display:inline-block;margin-right:6px"></span>${esc(txt)}</span>
     ${protoBadge(d.proto)}${ep}</div>
-    ${p.error || p.controllable === false ? "" : `<div class="ctl">${p.running
+    </div>${notice}`;
+  $("#ctl").innerHTML = p.error || p.controllable === false ? "" : p.running
       ? `<button class="act stop" id="simBtn" data-a="stop">■ Stop ${esc(p.port)}</button>`
-      : `<button class="act start" id="simBtn" data-a="start">▶ Start ${esc(p.port)}</button>`}</div>`}</div>${notice}`;
+      : `<button class="act start" id="simBtn" data-a="start">▶ Start ${esc(p.port)}</button>`;
   const b = $("#simBtn"); if (b) b.onclick = () => simAction(p, b.dataset.a, b);
   document.querySelectorAll("[data-copy]").forEach(e => e.onclick = () => { navigator.clipboard && navigator.clipboard.writeText(e.dataset.copy); toast("Path copied"); });
 }
